@@ -67,7 +67,7 @@ make dev  # development mode with live reload
 
 ## Web Admin Panel
 
-Once running, access the dashboard at: **http://localhost:8080**
+Once running, access the dashboard at: **http://localhost:9090**
 
 ### Features:
 - View bot status
@@ -166,7 +166,7 @@ FROM alpine:latest
 WORKDIR /app
 COPY --from=builder /app/twitch-bot .
 COPY web/ ./web/
-EXPOSE 8080
+EXPOSE 9090
 ENTRYPOINT ["./twitch-bot"]
 ```
 
@@ -174,7 +174,7 @@ Build and run:
 ```bash
 docker build -t twitch-bot .
 docker run -d \
-  -p 8080:8080 \
+  -p 9090:9090 \
   -e CHANNEL=your_channel \
   -e USERNAME=your_bot \
   -e TOKEN=your_token \

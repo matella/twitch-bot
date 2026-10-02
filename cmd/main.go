@@ -18,7 +18,7 @@ import (
 func main() {
 	// Parse command-line flags
 	dbPath := flag.String("db", "./bot.db", "Path to SQLite database")
-	webPort := flag.String("port", "8080", "Web server port")
+	webPort := flag.String("port", "9090", "Web server port")
 	twitchChannel := flag.String("channel", "", "Twitch channel to connect to")
 	twitchUsername := flag.String("username", "", "Twitch bot username")
 	twitchToken := flag.String("token", "", "Twitch OAuth token")
