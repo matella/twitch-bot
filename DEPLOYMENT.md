@@ -25,7 +25,7 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-Au premier lancement, les dépendances Go sont résolues pendant le build (`go mod tidy`) : il faut donc un accès réseau, et les versions retenues sont les plus récentes à ce moment-là. Pour les figer, voir « Figer les dépendances » plus bas.
+Le build télécharge les dépendances Go : il faut un accès réseau. Si `go.sum` est absent du dépôt, `go mod tidy` les résout pendant le build (voir « Dépendances » plus bas).
 
 Logs attendus : `interface d'administration`, puis `connecté à Twitch`. Si le bot s'arrête avec `login authentication failed`, le jeton ou le nom du bot est incorrect.
 
@@ -74,15 +74,16 @@ docker compose start
 
 Cette copie contient le jeton Spotify en clair : garde-la en lieu sûr.
 
-### Figer les dépendances
+### Dépendances
 
-Pour un build reproductible, commite `go.mod` et `go.sum` une fois résolus, sur une machine avec Go : `go mod tidy && git add go.mod go.sum && git commit`. Le workflow GitHub Actions (`.github/workflows/ci.yml`) les publie aussi en artefact `go-deps` à chaque exécution.
+Les versions des bibliothèques Go sont figées dans `go.mod` / `go.sum`. La CI GitHub (`.github/workflows/ci.yml`) les résout, compile, teste, puis les commite elle-même (`chore: fige go.mod et go.sum`) si elles ont changé. Pense à faire un `git pull` avant de rebuilder pour les récupérer.
 
 ## Dépannage
 
 | Symptôme | Piste |
 | --- | --- |
 | `variables d'environnement manquantes` | Compléter `.env`, puis `docker compose up -d`. |
+| `requires go >= 1.xx` pendant le build | `git pull` (l'image de build est en Go 1.26 et le Dockerfile active le téléchargement automatique du bon compilateur), puis `docker compose build --no-cache`. |
 | `bind: address already in use` | Changer `HOST_PORT` dans `.env`. |
 | `login authentication failed` | Jeton Twitch invalide ou sans les scopes `chat:read` / `chat:edit`, ou `TWITCH_USERNAME` qui ne correspond pas au compte du jeton. |
 | `INVALID_CLIENT: Invalid redirect URI` chez Spotify | L'URI déclarée dans le dashboard n'est pas identique, au caractère près, à `SPOTIFY_REDIRECT_URL`. |

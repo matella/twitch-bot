@@ -1,9 +1,12 @@
 # Contexte de build : la racine du dépôt (voir deploy/docker-compose.yml).
-FROM golang:1.24-alpine AS build
+# GOTOOLCHAIN=auto : si une dépendance exige un Go plus récent que l'image, Go télécharge
+# le bon compilateur au lieu d'échouer (« requires go >= 1.xx »).
+FROM golang:1.26-alpine AS build
+ENV GOTOOLCHAIN=auto
 WORKDIR /src
 COPY . .
 # Tant que go.sum n'est pas commité, « go mod tidy » résout les dépendances.
-# Une fois go.mod / go.sum complets dans le dépôt, cette commande ne change plus rien.
+# Une fois go.mod / go.sum complets dans le dépôt (la CI les y écrit), cette commande ne change plus rien.
 RUN go mod tidy \
  && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/twitch-bot ./cmd/twitch-bot
 
