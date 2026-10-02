@@ -3,7 +3,7 @@
 ## Prérequis
 
 - Docker avec le plugin Compose (`docker compose version`).
-- Un compte Twitch pour le bot, avec un jeton OAuth (scopes `chat:read` et `chat:edit`). Un générateur tiers comme twitchtokengenerator.com fait l'affaire ; une application Twitch à toi est plus propre. Ce jeton donne accès au chat au nom du bot : ne le partage pas.
+- Un compte Twitch pour le bot, et de préférence une **application Twitch** à toi (<https://dev.twitch.tv/console>) : le bot s'y connecte depuis l'administration et son jeton est renouvelé tout seul. Sans application, il faut coller un jeton OAuth fixe (scopes `chat:read` et `chat:edit`, p. ex. via twitchtokengenerator.com), qui expire. Un jeton donne accès au chat au nom du bot : ne le partage pas.
 - (Pour la musique) un compte **Spotify Premium** et une application créée sur <https://developer.spotify.com/dashboard>.
 
 ## 1. Récupérer et configurer
@@ -12,7 +12,7 @@
 git clone https://github.com/matella/twitch-bot.git
 cd twitch-bot/deploy
 cp .env.example .env
-nano .env        # TWITCH_*, ADMIN_PASSWORD, et SPOTIFY_* si besoin
+nano .env        # TWITCH_CHANNEL, TWITCH_CLIENT_ID/SECRET, ADMIN_PASSWORD, et SPOTIFY_* si besoin
 chmod 600 .env
 ```
 
@@ -27,7 +27,9 @@ docker compose logs -f
 
 Le build télécharge les dépendances Go (versions figées dans `go.sum`) : il faut un accès réseau.
 
-Logs attendus : `interface d'administration`, puis `connecté à Twitch`. Si le bot s'arrête avec `login authentication failed`, le jeton ou le nom du bot est incorrect.
+Logs attendus : `interface d'administration`. Avec une application Twitch, le bot attend ensuite que tu connectes son compte (étape 3 bis) ; avec un jeton fixe, tu verras `connecté à Twitch`.
+
+Le bot ne s'arrête jamais sur une erreur Twitch : il réessaie (5 s, puis jusqu'à 2 min) et l'administration affiche la raison dans la pastille « Bot ». Si elle indique `login authentication failed`, le jeton ou le nom du bot est incorrect.
 
 ## 3. Accéder à l'administration
 
@@ -43,13 +45,19 @@ puis ouvre <http://127.0.0.1:9090> (identifiant `ADMIN_USER`, mot de passe `ADMI
 
 **Reverse proxy HTTPS** — si matelab en a déjà un, fais-le pointer vers `127.0.0.1:<HOST_PORT>` (il doit conserver l'en-tête `Host` d'origine). Tu peux aussi mettre `BIND_ADDR=0.0.0.0` pour écouter sur le réseau local, mais seulement si tu acceptes le mot de passe en clair sur ce réseau.
 
+## 3 bis. Connecter le compte Twitch du bot (application Twitch)
+
+1. Dans la console Twitch, ouvre ton application → *OAuth Redirect URLs* et ajoute exactement `http://localhost:9090/auth/twitch/callback` (Twitch accepte `localhost` en HTTP, pas `127.0.0.1`). Avec le tunnel SSH, ouvre l'administration via `http://localhost:9090`. Avec un reverse proxy HTTPS, déclare plutôt `https://ton-domaine/auth/twitch/callback` **et** mets la même valeur dans `TWITCH_REDIRECT_URL`.
+2. Renseigne `TWITCH_CLIENT_ID` et `TWITCH_CLIENT_SECRET` dans `.env`, puis `docker compose up -d`.
+3. Dans l'administration, clique sur **Connecter** à côté de « Twitch », et connecte-toi avec le **compte du bot** (pas le tien ; Twitch redemande le compte à chaque fois). Le jeton est conservé en base et renouvelé automatiquement : à ne faire qu'une fois, sauf si tu révoques l'accès.
+
 ## 4. Connecter Spotify
 
 1. Dans le dashboard Spotify, ouvre ton application → *Settings* → *Redirect URIs* et ajoute exactement :
    `http://127.0.0.1:9090/auth/spotify/callback`
    (adapte le port si besoin). Spotify n'accepte plus `localhost` ni le HTTP simple, **sauf** l'adresse de boucle `http://127.0.0.1` : c'est pour cela que le tunnel SSH fonctionne tel quel. Avec un reverse proxy HTTPS, déclare plutôt `https://ton-domaine/auth/spotify/callback` **et** mets la même valeur dans `SPOTIFY_REDIRECT_URL`.
 2. Renseigne `SPOTIFY_ID` et `SPOTIFY_SECRET` dans `.env`, puis `docker compose up -d`.
-3. Dans l'administration, clique sur **Connecter Spotify** et accepte. Le jeton est conservé en base et renouvelé automatiquement : à ne faire qu'une fois.
+3. Dans l'administration, clique sur **Connecter** à côté de « Spotify » et accepte. Le jeton est conservé en base et renouvelé automatiquement : à ne faire qu'une fois.
 4. Ouvre Spotify sur un appareil (un lecteur actif est nécessaire pour ajouter à la file), puis teste `!song daft punk one more time` dans le chat.
 
 ## Exploitation
@@ -72,11 +80,15 @@ docker compose cp twitch-bot:/data/bot.db ./bot-$(date +%F).db
 docker compose start
 ```
 
-Cette copie contient le jeton Spotify en clair : garde-la en lieu sûr.
+Cette copie contient les jetons Twitch et Spotify en clair : garde-la en lieu sûr.
 
 ### Dépendances
 
-Les versions des bibliothèques Go sont figées dans `go.mod` / `go.sum`. La CI GitHub (`.github/workflows/ci.yml`) les résout, compile, teste, puis les commite elle-même (`chore: fige go.mod et go.sum`) si elles ont changé. Pense à faire un `git pull` avant de rebuilder pour les récupérer.
+Les versions des bibliothèques Go sont figées dans `go.mod` / `go.sum`. La CI GitHub (`.github/workflows/ci.yml`) vérifie qu'ils sont à jour (`go mod tidy` ne doit rien changer), compile, teste, puis construit l'image Docker. Pour mettre à jour une dépendance : `go get <module>@latest && make tidy`, puis commiter `go.mod` et `go.sum`.
+
+### Mise à jour de la base
+
+Le schéma de la base est versionné (`PRAGMA user_version`) et migré automatiquement au démarrage. Un programme plus ancien refuse d'ouvrir une base plus récente : sauvegarde avant de revenir en arrière.
 
 ## Dépannage
 
@@ -85,7 +97,11 @@ Les versions des bibliothèques Go sont figées dans `go.mod` / `go.sum`. La CI 
 | `variables d'environnement manquantes` | Compléter `.env`, puis `docker compose up -d`. |
 | `requires go >= 1.xx` pendant le build | `git pull` (l'image de build est en Go 1.26 et le Dockerfile active le téléchargement automatique du bon compilateur), puis `docker compose build --no-cache`. |
 | `bind: address already in use` | Changer `HOST_PORT` dans `.env`. |
-| `login authentication failed` | Jeton Twitch invalide ou sans les scopes `chat:read` / `chat:edit`, ou `TWITCH_USERNAME` qui ne correspond pas au compte du jeton. |
+| `login authentication failed` | Jeton fixe invalide ou sans les scopes `chat:read` / `chat:edit`, ou `TWITCH_USERNAME` qui ne correspond pas au compte du jeton. Avec une application Twitch : reconnecte le compte du bot depuis l'administration. |
+| « Twitch : non connecté » alors que le compte était connecté | Twitch a révoqué l'accès (mot de passe changé, application déconnectée) : clique sur **Connecter**. |
+| Twitch refuse la redirection | L'URL déclarée dans la console Twitch n'est pas identique à `TWITCH_REDIRECT_URL` (par défaut `http://localhost:<port>/auth/twitch/callback`). |
+| `!queue` / `!np` répondent « Erreur Spotify » | Jeton Spotify ancien sans le droit `user-read-currently-playing` : déconnecte puis reconnecte Spotify. |
+| « trop de tentatives » (429) dans l'administration | 10 mots de passe faux : attends 10 minutes. |
 | `INVALID_CLIENT: Invalid redirect URI` chez Spotify | L'URI déclarée dans le dashboard n'est pas identique, au caractère près, à `SPOTIFY_REDIRECT_URL`. |
 | « aucun lecteur Spotify actif » dans le chat | Ouvrir Spotify sur un appareil et lancer une lecture. |
 | L'administration redemande le mot de passe en boucle | Vérifier `ADMIN_USER` / `ADMIN_PASSWORD` dans `.env` (puis recréer le conteneur). |

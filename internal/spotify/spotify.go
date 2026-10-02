@@ -1,5 +1,5 @@
 // Package spotify connecte le bot au compte Spotify du streamer (OAuth « authorization code »)
-// afin de pouvoir chercher des titres et les ajouter à la file de lecture réelle.
+// afin de pouvoir chercher des titres et agir sur la file de lecture réelle.
 //
 // Le flux « client credentials » ne suffit pas : il ne donne accès à aucun compte
 // utilisateur, donc impossible d'agir sur la file de lecture.
@@ -7,19 +7,18 @@ package spotify
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	sp "github.com/zmb3/spotify/v2"
 	spauth "github.com/zmb3/spotify/v2/auth"
 	"golang.org/x/oauth2"
 
 	"github.com/matella/twitch-bot/internal/chat"
-	"github.com/matella/twitch-bot/internal/model"
+	"github.com/matella/twitch-bot/internal/oauthx"
 )
 
 const (
@@ -28,14 +27,8 @@ const (
 )
 
 // Droits demandés : agir sur la file de lecture et lire l'état du lecteur.
-var scopes = []string{"user-modify-playback-state", "user-read-playback-state"}
-
-// Settings est le stockage clé/valeur utilisé pour conserver le jeton.
-type Settings interface {
-	GetSetting(ctx context.Context, key string) (string, error)
-	SetSetting(ctx context.Context, key, value string) error
-	DeleteSetting(ctx context.Context, key string) error
-}
+// Un jeton obtenu avant l'ajout d'un droit doit être renouvelé en reconnectant le compte.
+var scopes = []string{"user-modify-playback-state", "user-read-playback-state", "user-read-currently-playing"}
 
 // Config contient les identifiants de l'application Spotify.
 type Config struct {
@@ -47,19 +40,20 @@ type Config struct {
 // Client implémente chat.Music et l'interface Spotify du serveur d'administration.
 type Client struct {
 	oauth    *oauth2.Config
-	settings Settings
+	settings oauthx.Settings
 	appCtx   context.Context // vit aussi longtemps que l'application : sert au renouvellement du jeton
 
 	mu      sync.RWMutex
 	api     *sp.Client // nil tant qu'aucun compte n'est connecté
 	account string
+	revoked bool // le fournisseur a refusé le renouvellement : reconnexion nécessaire
 }
 
 var _ chat.Music = (*Client)(nil)
 
 // New crée le client et recharge le jeton enregistré, s'il existe.
 // appCtx doit rester valide pendant toute la vie de l'application.
-func New(appCtx context.Context, cfg Config, settings Settings) (*Client, error) {
+func New(appCtx context.Context, cfg Config, settings oauthx.Settings) (*Client, error) {
 	c := &Client{
 		appCtx:   appCtx,
 		settings: settings,
@@ -75,22 +69,15 @@ func New(appCtx context.Context, cfg Config, settings Settings) (*Client, error)
 			},
 		},
 	}
-
-	raw, err := settings.GetSetting(appCtx, tokenKey)
-	switch {
-	case errors.Is(err, model.ErrNotFound):
-		return c, nil
-	case err != nil:
+	tok, found, err := oauthx.Load(appCtx, settings, tokenKey)
+	if err != nil {
 		return nil, fmt.Errorf("lecture du jeton Spotify : %w", err)
 	}
-	var tok oauth2.Token
-	if err := json.Unmarshal([]byte(raw), &tok); err != nil {
-		slog.Warn("jeton Spotify illisible, reconnexion nécessaire", "err", err)
-		return c, nil
+	if found {
+		c.account, _ = settings.GetSetting(appCtx, accountKey)
+		c.setToken(tok)
+		slog.Info("compte Spotify rechargé", "account", c.account)
 	}
-	c.account, _ = settings.GetSetting(appCtx, accountKey)
-	c.setToken(&tok)
-	slog.Info("compte Spotify rechargé", "account", c.account)
 	return c, nil
 }
 
@@ -103,7 +90,7 @@ func (c *Client) Exchange(ctx context.Context, code string) error {
 	if err != nil {
 		return err
 	}
-	c.save(tok)
+	oauthx.Save(c.appCtx, c.settings, tokenKey, tok)
 	c.setToken(tok)
 
 	// Le nom du compte n'est qu'informatif : un échec ici n'empêche pas la connexion.
@@ -127,22 +114,12 @@ func (c *Client) Exchange(ctx context.Context, code string) error {
 // setToken construit le client API : le jeton est renouvelé automatiquement
 // et chaque nouveau jeton est réécrit en base (Spotify peut en changer le refresh token).
 func (c *Client) setToken(tok *oauth2.Token) {
-	src := &persistingSource{src: c.oauth.TokenSource(c.appCtx, tok), last: tok.AccessToken, save: c.save}
+	src := oauthx.NewPersistingSource(c.oauth.TokenSource(c.appCtx, tok), tok,
+		func(t *oauth2.Token) { oauthx.Save(c.appCtx, c.settings, tokenKey, t) })
 	api := sp.New(oauth2.NewClient(c.appCtx, src))
 	c.mu.Lock()
-	c.api = api
+	c.api, c.revoked = api, false
 	c.mu.Unlock()
-}
-
-func (c *Client) save(tok *oauth2.Token) {
-	b, err := json.Marshal(tok)
-	if err != nil {
-		slog.Error("sérialisation du jeton Spotify", "err", err)
-		return
-	}
-	if err := c.settings.SetSetting(c.appCtx, tokenKey, string(b)); err != nil {
-		slog.Error("enregistrement du jeton Spotify", "err", err)
-	}
 }
 
 func (c *Client) client() *sp.Client {
@@ -151,8 +128,25 @@ func (c *Client) client() *sp.Client {
 	return c.api
 }
 
-// Connected indique si un compte Spotify est connecté.
-func (c *Client) Connected() bool { return c.client() != nil }
+// check examine une erreur d'appel : un refus définitif du renouvellement du jeton
+// fait repasser le compte en « non connecté » au lieu de répondre « erreur » indéfiniment.
+func (c *Client) check(err error) error {
+	if err != nil && oauthx.IsAuthRevoked(err) {
+		c.mu.Lock()
+		c.revoked = true
+		c.mu.Unlock()
+		slog.Warn("jeton Spotify refusé : reconnecte le compte depuis l'administration")
+		return chat.ErrNotConnected
+	}
+	return err
+}
+
+// Connected indique si un compte Spotify est connecté et utilisable.
+func (c *Client) Connected() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.api != nil && !c.revoked
+}
 
 // Account renvoie le nom du compte connecté (vide si inconnu).
 func (c *Client) Account() string {
@@ -164,7 +158,7 @@ func (c *Client) Account() string {
 // Disconnect oublie le compte et supprime le jeton enregistré.
 func (c *Client) Disconnect(ctx context.Context) error {
 	c.mu.Lock()
-	c.api, c.account = nil, ""
+	c.api, c.account, c.revoked = nil, "", false
 	c.mu.Unlock()
 	if err := c.settings.DeleteSetting(ctx, tokenKey); err != nil {
 		return err
@@ -172,74 +166,109 @@ func (c *Client) Disconnect(ctx context.Context) error {
 	return c.settings.DeleteSetting(ctx, accountKey)
 }
 
-// Find cherche un titre : lien/URI Spotify ou recherche texte (premier résultat).
-func (c *Client) Find(ctx context.Context, query string) (*chat.Track, error) {
-	api := c.client()
-	if api == nil {
+func (c *Client) usable() (*sp.Client, error) {
+	if !c.Connected() {
 		return nil, chat.ErrNotConnected
 	}
+	return c.client(), nil
+}
+
+func toTrack(t sp.FullTrack) chat.Track {
+	artists := make([]string, len(t.Artists))
+	for i, a := range t.Artists {
+		artists[i] = a.Name
+	}
+	main := ""
+	if len(artists) > 0 {
+		main = artists[0]
+	}
+	return chat.Track{
+		ID: string(t.ID), Name: t.Name, Artist: main, Artists: artists,
+		Duration: time.Duration(t.Duration) * time.Millisecond, Explicit: t.Explicit,
+	}
+}
+
+// Find cherche un titre : lien/URI Spotify ou recherche texte (premier résultat).
+func (c *Client) Find(ctx context.Context, query string) (*chat.Track, error) {
+	api, err := c.usable()
+	if err != nil {
+		return nil, err
+	}
+	// "from_token" : marché du compte connecté (exclut les titres injouables chez lui).
+	market := sp.Country("from_token")
 
 	if id, ok := chat.ParseTrackID(query); ok {
-		t, err := api.GetTrack(ctx, sp.ID(id))
+		t, err := api.GetTrack(ctx, sp.ID(id), market)
 		if err != nil {
-			return nil, fmt.Errorf("lecture du titre %s : %w", id, err)
+			return nil, c.check(fmt.Errorf("lecture du titre %s : %w", id, err))
 		}
-		return &chat.Track{ID: string(t.ID), Name: t.Name, Artist: firstArtist(t.Artists)}, nil
+		tr := toTrack(*t)
+		return &tr, nil
 	}
 
-	res, err := api.Search(ctx, query, sp.SearchTypeTrack, sp.Limit(1))
+	res, err := api.Search(ctx, query, sp.SearchTypeTrack, sp.Limit(1), market)
 	if err != nil {
-		return nil, fmt.Errorf("recherche : %w", err)
+		return nil, c.check(fmt.Errorf("recherche : %w", err))
 	}
 	if res == nil || res.Tracks == nil || len(res.Tracks.Tracks) == 0 {
 		return nil, chat.ErrNoResult
 	}
-	t := res.Tracks.Tracks[0]
-	return &chat.Track{ID: string(t.ID), Name: t.Name, Artist: firstArtist(t.Artists)}, nil
+	tr := toTrack(res.Tracks.Tracks[0])
+	return &tr, nil
 }
 
-func firstArtist(artists []sp.SimpleArtist) string {
-	if len(artists) == 0 {
-		return ""
-	}
-	return artists[0].Name
+func isNoDevice(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "no active device")
 }
 
 // Queue ajoute le titre à la file de lecture du compte connecté.
 func (c *Client) Queue(ctx context.Context, trackID string) error {
-	api := c.client()
-	if api == nil {
-		return chat.ErrNotConnected
+	api, err := c.usable()
+	if err != nil {
+		return err
 	}
 	if err := api.QueueSong(ctx, sp.ID(trackID)); err != nil {
 		// Spotify répond « No active device found » quand aucun lecteur n'est ouvert.
-		if strings.Contains(strings.ToLower(err.Error()), "no active device") {
+		if isNoDevice(err) {
 			return chat.ErrNoDevice
 		}
-		return err
+		return c.check(err)
 	}
 	return nil
 }
 
-// persistingSource réécrit en base chaque nouveau jeton d'accès obtenu par renouvellement.
-type persistingSource struct {
-	src  oauth2.TokenSource
-	save func(*oauth2.Token)
-
-	mu   sync.Mutex
-	last string
-}
-
-func (p *persistingSource) Token() (*oauth2.Token, error) {
-	tok, err := p.src.Token()
+// Playback renvoie le titre en cours et la file à venir.
+func (c *Client) Playback(ctx context.Context) (*chat.Playback, error) {
+	api, err := c.usable()
 	if err != nil {
 		return nil, err
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if tok.AccessToken != p.last {
-		p.last = tok.AccessToken
-		p.save(tok)
+	q, err := api.GetQueue(ctx)
+	if err != nil {
+		return nil, c.check(fmt.Errorf("lecture de la file : %w", err))
 	}
-	return tok, nil
+	pb := &chat.Playback{Queue: make([]chat.Track, 0, len(q.Items))}
+	if q.CurrentlyPlaying.ID != "" {
+		cur := toTrack(q.CurrentlyPlaying)
+		pb.Current = &cur
+	}
+	for _, t := range q.Items {
+		pb.Queue = append(pb.Queue, toTrack(t))
+	}
+	return pb, nil
+}
+
+// Skip passe au titre suivant.
+func (c *Client) Skip(ctx context.Context) error {
+	api, err := c.usable()
+	if err != nil {
+		return err
+	}
+	if err := api.Next(ctx); err != nil {
+		if isNoDevice(err) {
+			return chat.ErrNoDevice
+		}
+		return c.check(err)
+	}
+	return nil
 }

@@ -11,6 +11,8 @@
     <h1>Twitch Bot</h1>
     <div class="status" id="status" aria-live="polite">
       <span class="pill" id="bot-pill">Bot : …</span>
+      <span class="pill" id="twitch-pill" hidden></span>
+      <span id="twitch-action"></span>
       <span class="pill" id="spotify-pill">Spotify : …</span>
       <span id="spotify-action"></span>
     </div>
@@ -21,7 +23,15 @@
   <main class="grid">
     <section class="panel">
       <h2>Commandes personnalisées</h2>
-      <p class="hint">Variables : <code>{user}</code> (auteur), <code>{channel}</code>, <code>{args}</code> (texte après la commande).</p>
+      <p class="hint">
+        Variables : <code>{user}</code> auteur, <code>{channel}</code>, <code>{args}</code> texte après la commande,
+        <code>{touser}</code> premier mot de <code>{args}</code>, <code>{count}</code> nombre d'utilisations,
+        <code>{random}</code> nombre de 1 à 100, <code>{pick:a|b|c}</code> une option au hasard.
+      </p>
+      <p class="hint" id="args-warning" hidden>
+        ⚠ Avec <code>{args}</code> et « Tout le monde », n'importe quel spectateur peut faire écrire du texte
+        au bot. Les « ! », « / » et « . » initiaux sont retirés, mais préfère réserver cette commande aux modérateurs.
+      </p>
       <form id="cmd-form" autocomplete="off">
         <label>Nom
           <input id="cmd-name" required maxlength="33" placeholder="discord" pattern="!?[\p{L}\p{N}_]{1,32}">
@@ -29,15 +39,77 @@
         <label>Réponse
           <textarea id="cmd-response" required maxlength="400" rows="3" placeholder="Rejoins le Discord : https://…"></textarea>
         </label>
-        <label>Délai global (secondes)
-          <input id="cmd-cooldown" type="number" min="0" max="3600" value="5">
-        </label>
+        <div class="two">
+          <label>Qui peut l'utiliser
+            <select id="cmd-permission">
+              <option value="everyone">Tout le monde</option>
+              <option value="subscriber">Abonnés et plus</option>
+              <option value="vip">VIP et plus</option>
+              <option value="moderator">Modérateurs et plus</option>
+              <option value="broadcaster">Streamer</option>
+            </select>
+          </label>
+          <label>Alias (séparés par des espaces)
+            <input id="cmd-aliases" placeholder="dc serveur">
+          </label>
+        </div>
+        <div class="two">
+          <label>Délai global (s)
+            <input id="cmd-cooldown" type="number" min="0" max="3600" value="5">
+          </label>
+          <label>Délai par spectateur (s)
+            <input id="cmd-user-cooldown" type="number" min="0" max="3600" value="0">
+          </label>
+        </div>
+        <label class="check"><input id="cmd-enabled" type="checkbox" checked> Activée</label>
         <div class="row">
           <button type="submit" id="cmd-submit">Ajouter</button>
           <button type="button" id="cmd-cancel" class="secondary" hidden>Annuler la modification</button>
         </div>
       </form>
       <ul class="list" id="commands"></ul>
+    </section>
+
+    <section class="panel">
+      <h2>Musique</h2>
+      <p class="hint">
+        Règles de <code>!song</code> et <code>!skip</code>. Les plafonds ne comptent que les demandes
+        faites via le bot et encore dans la file Spotify. 0 = pas de limite.
+      </p>
+      <form id="music-form" autocomplete="off">
+        <div class="two">
+          <label>Qui peut demander un titre
+            <select id="m-request-level" data-level></select>
+          </label>
+          <label>Qui peut passer un titre (<code>!skip</code>)
+            <select id="m-skip-level" data-level></select>
+          </label>
+        </div>
+        <div class="two">
+          <label>Demandes en attente (total)
+            <input id="m-max-pending" type="number" min="0" max="10000">
+          </label>
+          <label>Demandes en attente par spectateur
+            <input id="m-max-per-user" type="number" min="0" max="10000">
+          </label>
+        </div>
+        <label>Durée maximale d'un titre (secondes)
+          <input id="m-max-duration" type="number" min="0" max="10000">
+        </label>
+        <label class="check"><input id="m-block-explicit" type="checkbox"> Refuser les titres explicites</label>
+        <label>Artistes ou titres refusés (un par ligne, recherche partielle)
+          <textarea id="m-blocklist" rows="3" placeholder="rickroll"></textarea>
+        </label>
+        <div class="row"><button type="submit">Enregistrer les règles</button></div>
+      </form>
+
+      <h3>File Spotify</h3>
+      <div class="row">
+        <button type="button" id="q-refresh" class="secondary">Actualiser</button>
+        <button type="button" id="q-skip" class="secondary">Passer le titre</button>
+      </div>
+      <div class="hint" id="q-current">…</div>
+      <ul class="list short" id="q-list"></ul>
     </section>
 
     <section class="panel">

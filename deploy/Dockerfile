@@ -5,7 +5,7 @@ FROM golang:1.26-alpine AS build
 ENV GOTOOLCHAIN=auto
 WORKDIR /src
 # Dépendances d'abord : cette couche reste en cache tant que go.mod / go.sum ne changent pas.
-# Les versions sont figées dans le dépôt (go.sum est écrit par la CI).
+# Les versions sont figées dans le dépôt (go.mod / go.sum, vérifiés par la CI).
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .

@@ -21,6 +21,7 @@ import (
 	"github.com/matella/twitch-bot/internal/server"
 	"github.com/matella/twitch-bot/internal/spotify"
 	"github.com/matella/twitch-bot/internal/store"
+	"github.com/matella/twitch-bot/internal/twitchauth"
 	"github.com/matella/twitch-bot/web"
 )
 
@@ -68,16 +69,35 @@ func run() error {
 	}
 
 	handler := chat.New(db, music, chat.Options{Channel: cfg.Channel, SongCooldown: cfg.SongCooldown})
-	twitchBot := bot.New(cfg.Channel, cfg.Username, cfg.Token, handler)
+
+	// Identifiants du bot : compte connecté depuis l'administration (jeton renouvelé), sinon jeton fixe.
+	// Même précaution que pour Spotify : l'interface reste nil si la connexion OAuth n'est pas configurée.
+	var creds bot.Credentials = bot.StaticCredentials{User: cfg.Username, Pass: cfg.Token}
+	var twitchAdmin server.Twitch
+	if cfg.TwitchOAuthEnabled() {
+		tw, err := twitchauth.New(ctx, twitchauth.Config{
+			ClientID:     cfg.TwitchClientID,
+			ClientSecret: cfg.TwitchClientSecret,
+			RedirectURL:  cfg.TwitchRedirectURL,
+		}, db)
+		if err != nil {
+			return err
+		}
+		creds, twitchAdmin = tw, tw
+		slog.Info("connexion Twitch OAuth configurée", "redirect_url", cfg.TwitchRedirectURL, "connected", tw.Connected())
+	}
+	twitchBot := bot.New(cfg.Channel, creds, handler)
 
 	srv := &http.Server{
 		Addr: ":" + cfg.Port,
 		Handler: server.New(server.Options{
-			Channel:       cfg.Channel,
-			AdminUser:     cfg.AdminUser,
-			AdminPassword: cfg.AdminPassword,
-			Assets:        web.Static(),
-		}, db, spotifyAdmin, twitchBot),
+			Channel:           cfg.Channel,
+			AdminUser:         cfg.AdminUser,
+			AdminPassword:     cfg.AdminPassword,
+			Assets:            web.Static(),
+			TrustProxy:        cfg.TrustProxy,
+			OnCommandsChanged: handler.InvalidateCommands,
+		}, db, spotifyAdmin, twitchAdmin, twitchBot),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

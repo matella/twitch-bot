@@ -5,16 +5,21 @@ package commands
 import (
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/matella/twitch-bot/internal/model"
 )
 
 const (
 	MaxResponseRunes       = 400
 	MaxCooldownSeconds     = 3600
 	DefaultCooldownSeconds = 5
+	MaxAliases             = 10
 	// MaxMessageRunes est la limite d'un message Twitch.
 	MaxMessageRunes = 500
 )
@@ -22,7 +27,10 @@ const (
 var nameRE = regexp.MustCompile(`^[\p{L}\p{N}_]{1,32}$`)
 
 // Commandes intégrées : une commande personnalisée ne peut pas les masquer.
-var reserved = map[string]struct{}{"song": {}, "sr": {}, "queue": {}, "help": {}}
+var reserved = map[string]struct{}{
+	"song": {}, "sr": {}, "queue": {}, "help": {}, "skip": {}, "np": {}, "currentsong": {},
+	"addcmd": {}, "editcmd": {}, "delcmd": {},
+}
 
 // IsReserved indique si le nom est une commande intégrée.
 func IsReserved(name string) bool {
@@ -48,6 +56,30 @@ func ValidateName(name string) error {
 	return nil
 }
 
+// NormalizeAliases normalise et valide les alias d'une commande : valides, uniques, distincts du nom.
+func NormalizeAliases(name string, aliases []string) ([]string, error) {
+	out := make([]string, 0, len(aliases))
+	seen := map[string]bool{name: true}
+	for _, a := range aliases {
+		a = NormalizeName(a)
+		if a == "" {
+			continue
+		}
+		if err := ValidateName(a); err != nil {
+			return nil, fmt.Errorf("alias %q : %w", a, err)
+		}
+		if seen[a] {
+			continue
+		}
+		seen[a] = true
+		out = append(out, a)
+	}
+	if len(out) > MaxAliases {
+		return nil, fmt.Errorf("trop d'alias (%d maximum)", MaxAliases)
+	}
+	return out, nil
+}
+
 // ValidateResponse valide le texte de réponse.
 func ValidateResponse(r string) error {
 	n := utf8.RuneCountInString(strings.TrimSpace(r))
@@ -66,6 +98,25 @@ func ValidateCooldown(c int) error {
 		return fmt.Errorf("délai invalide (0 à %d secondes)", MaxCooldownSeconds)
 	}
 	return nil
+}
+
+// New construit une commande valide avec les réglages par défaut (tout le monde, activée).
+func New(name, response string) (model.Command, error) {
+	name = NormalizeName(name)
+	if err := ValidateName(name); err != nil {
+		return model.Command{}, err
+	}
+	if err := ValidateResponse(response); err != nil {
+		return model.Command{}, err
+	}
+	return model.Command{
+		Name:            name,
+		Response:        strings.TrimSpace(response),
+		CooldownSeconds: DefaultCooldownSeconds,
+		Permission:      model.LevelEveryone,
+		Enabled:         true,
+		Aliases:         []string{},
+	}, nil
 }
 
 // Parse décompose une ligne de chat "!nom arguments".
@@ -88,11 +139,71 @@ func Parse(line string) (name, args string, ok bool) {
 	return name, args, true
 }
 
-// Render remplace {user}, {channel} et {args} dans le modèle.
+// Vars contient les valeurs substituées dans la réponse d'une commande.
+type Vars struct {
+	User    string
+	Channel string
+	Args    string
+	Count   int64
+	Intn    func(n int) int // tirage dans [0, n) ; injectable pour les tests
+}
+
+var varRE = regexp.MustCompile(`\{(user|channel|args|touser|count|random|pick:[^{}]*)\}`)
+
+// Render remplace les variables du modèle :
+//
+//	{user} auteur · {channel} chaîne · {args} texte après la commande
+//	{touser} premier mot de {args} sans « @ » (sinon l'auteur)
+//	{count} nombre d'utilisations · {random} nombre de 1 à 100
+//	{pick:a|b|c} une des options au hasard
+//
 // Le remplacement se fait en une seule passe : le contenu de {args}
 // (fourni par un spectateur) n'est jamais réinterprété.
-func Render(tmpl, user, channel, args string) string {
-	return strings.NewReplacer("{user}", user, "{channel}", channel, "{args}", args).Replace(tmpl)
+func Render(tmpl string, v Vars) string {
+	if v.Intn == nil {
+		v.Intn = rand.IntN
+	}
+	args := safeArgs(v.Args)
+	return varRE.ReplaceAllStringFunc(tmpl, func(m string) string {
+		key := m[1 : len(m)-1]
+		switch {
+		case key == "user":
+			return v.User
+		case key == "channel":
+			return v.Channel
+		case key == "args":
+			return args
+		case key == "touser":
+			if f := strings.Fields(args); len(f) > 0 {
+				if t := strings.TrimLeft(f[0], "@"); t != "" {
+					return t
+				}
+			}
+			return v.User
+		case key == "count":
+			return strconv.FormatInt(v.Count, 10)
+		case key == "random":
+			return strconv.Itoa(v.Intn(100) + 1)
+		default: // pick:
+			opts := strings.Split(strings.TrimPrefix(key, "pick:"), "|")
+			return strings.TrimSpace(opts[v.Intn(len(opts))])
+		}
+	})
+}
+
+// safeArgs neutralise ce qu'un spectateur pourrait faire relayer par le bot : un « ! » initial
+// déclencherait les autres bots, un « / » ou « . » une commande Twitch.
+func safeArgs(args string) string {
+	f := strings.Fields(args)
+	for i, w := range f {
+		f[i] = strings.TrimLeft(w, "!/.")
+	}
+	return strings.Join(f, " ")
+}
+
+// UsesArgs indique si la réponse relaie du texte saisi par les spectateurs.
+func UsesArgs(response string) bool {
+	return strings.Contains(response, "{args}")
 }
 
 // SanitizeOutgoing prépare un message à envoyer sur Twitch :

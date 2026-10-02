@@ -1,8 +1,7 @@
 // Package server expose l'interface d'administration (API JSON + page web).
 //
 // Toutes les routes, sauf /api/health, exigent une authentification HTTP Basic.
-// Le paquet ne dépend que de la bibliothèque standard : le stockage, Spotify et
-// le bot sont injectés via des interfaces.
+// Le stockage, Spotify, Twitch et le bot sont injectés via des interfaces.
 package server
 
 import (
@@ -13,14 +12,19 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/matella/twitch-bot/internal/chat"
 	"github.com/matella/twitch-bot/internal/commands"
 	"github.com/matella/twitch-bot/internal/model"
 )
@@ -34,10 +38,12 @@ type Store interface {
 	RecentSongRequests(ctx context.Context, limit int) ([]model.SongRequest, error)
 	DeleteSongRequest(ctx context.Context, id int64) error
 	ClearSongRequests(ctx context.Context) error
+	GetMusicSettings(ctx context.Context) (model.MusicSettings, error)
+	SetMusicSettings(ctx context.Context, s model.MusicSettings) error
 }
 
-// Spotify gère la connexion du compte Spotify du streamer. Peut être nil.
-type Spotify interface {
+// Account est la connexion à un compte externe (Spotify, Twitch) pilotée depuis l'administration.
+type Account interface {
 	AuthURL(state string) string
 	Exchange(ctx context.Context, code string) error
 	Connected() bool
@@ -45,9 +51,23 @@ type Spotify interface {
 	Disconnect(ctx context.Context) error
 }
 
-// Bot expose l'état de la connexion à Twitch.
+// Spotify gère le compte Spotify du streamer et sa file de lecture. Peut être nil.
+type Spotify interface {
+	Account
+	Playback(ctx context.Context) (*chat.Playback, error)
+	Skip(ctx context.Context) error
+}
+
+// Twitch gère le compte Twitch du bot. Peut être nil (jeton fixe dans la configuration).
+type Twitch interface {
+	Account
+}
+
+// Bot expose l'état de la connexion à Twitch. Peut être nil.
 type Bot interface {
 	Connected() bool
+	LastError() string
+	Reconnect()
 }
 
 // Options configure le serveur.
@@ -56,23 +76,31 @@ type Options struct {
 	AdminUser     string
 	AdminPassword string
 	Assets        fs.FS // contenu statique (index.html, app.js, style.css)
+	// TrustProxy : croire X-Forwarded-Proto / X-Forwarded-For (à n'activer que derrière un reverse proxy).
+	TrustProxy bool
+	// OnCommandsChanged est appelée après chaque modification des commandes (pour vider le cache du bot).
+	OnCommandsChanged func()
+	Now               func() time.Time // injectable pour les tests
 }
 
 type server struct {
 	store   Store
 	spotify Spotify
+	twitch  Twitch
 	bot     Bot
 	opts    Options
+	fails   *failLimiter
 
 	userHash [sha256.Size]byte
 	passHash [sha256.Size]byte
 }
 
-const stateCookie = "spotify_state"
-
 // New construit le handler HTTP complet.
-func New(o Options, st Store, sp Spotify, bot Bot) http.Handler {
-	s := &server{store: st, spotify: sp, bot: bot, opts: o}
+func New(o Options, st Store, sp Spotify, tw Twitch, bot Bot) http.Handler {
+	if o.Now == nil {
+		o.Now = time.Now
+	}
+	s := &server{store: st, spotify: sp, twitch: tw, bot: bot, opts: o, fails: newFailLimiter(o.Now)}
 	s.userHash = sha256.Sum256([]byte(o.AdminUser))
 	s.passHash = sha256.Sum256([]byte(o.AdminPassword))
 
@@ -85,9 +113,30 @@ func New(o Options, st Store, sp Spotify, bot Bot) http.Handler {
 	api.HandleFunc("GET /api/requests", s.listRequests)
 	api.HandleFunc("DELETE /api/requests", s.clearRequests)
 	api.HandleFunc("DELETE /api/requests/{id}", s.deleteRequest)
-	api.HandleFunc("POST /api/spotify/disconnect", s.spotifyDisconnect)
-	api.HandleFunc("GET /auth/spotify/login", s.spotifyLogin)
-	api.HandleFunc("GET /auth/spotify/callback", s.spotifyCallback)
+	api.HandleFunc("GET /api/music-settings", s.getMusicSettings)
+	api.HandleFunc("PUT /api/music-settings", s.putMusicSettings)
+	api.HandleFunc("GET /api/spotify/queue", s.spotifyQueue)
+	api.HandleFunc("POST /api/spotify/skip", s.spotifySkip)
+
+	spotifyFlow := s.oauthFlow("spotify", "Spotify n'est pas configuré (SPOTIFY_ID / SPOTIFY_SECRET)", nil)
+	twitchFlow := s.oauthFlow("twitch", "La connexion Twitch n'est pas configurée (TWITCH_CLIENT_ID / TWITCH_CLIENT_SECRET)",
+		func() {
+			if s.bot != nil {
+				s.bot.Reconnect() // reprend aussitôt avec le nouveau compte
+			}
+		})
+	if s.spotify != nil {
+		spotifyFlow.account = s.spotify
+	}
+	if s.twitch != nil {
+		twitchFlow.account = s.twitch
+	}
+	api.HandleFunc("POST /api/spotify/disconnect", spotifyFlow.disconnect)
+	api.HandleFunc("GET /auth/spotify/login", spotifyFlow.login)
+	api.HandleFunc("GET /auth/spotify/callback", spotifyFlow.callback)
+	api.HandleFunc("POST /api/twitch/disconnect", twitchFlow.disconnect)
+	api.HandleFunc("GET /auth/twitch/login", twitchFlow.login)
+	api.HandleFunc("GET /auth/twitch/callback", twitchFlow.callback)
 	api.Handle("GET /", http.FileServerFS(o.Assets))
 
 	root := http.NewServeMux()
@@ -110,8 +159,30 @@ func (s *server) headers(next http.Handler) http.Handler {
 	})
 }
 
+// clientKey identifie l'appelant pour la limitation des tentatives de connexion.
+func (s *server) clientKey(r *http.Request) string {
+	if s.opts.TrustProxy {
+		// Le dernier élément est celui ajouté par notre propre proxy ; les précédents sont falsifiables.
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.Split(xff, ",")
+			return strings.TrimSpace(parts[len(parts)-1])
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
 func (s *server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := s.clientKey(r)
+		if wait := s.fails.blockedFor(key); wait > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+			writeErr(w, http.StatusTooManyRequests, "trop de tentatives, réessaie plus tard")
+			return
+		}
 		u, p, ok := r.BasicAuth()
 		uh := sha256.Sum256([]byte(u))
 		ph := sha256.Sum256([]byte(p))
@@ -119,10 +190,15 @@ func (s *server) auth(next http.Handler) http.Handler {
 		userOK := subtle.ConstantTimeCompare(uh[:], s.userHash[:])
 		passOK := subtle.ConstantTimeCompare(ph[:], s.passHash[:])
 		if !ok || userOK&passOK != 1 {
+			// Une requête sans identifiants est le premier échange normal d'un navigateur : pas une erreur.
+			if ok {
+				s.fails.fail(key)
+			}
 			w.Header().Set("WWW-Authenticate", `Basic realm="twitch-bot", charset="UTF-8"`)
 			writeErr(w, http.StatusUnauthorized, "authentification requise")
 			return
 		}
+		s.fails.reset(key)
 		next.ServeHTTP(w, r)
 	})
 }
@@ -147,6 +223,69 @@ func (s *server) csrf(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// failLimiter bloque temporairement un appelant après trop d'échecs d'authentification.
+type failLimiter struct {
+	now func() time.Time
+	mu  sync.Mutex
+	m   map[string]*failEntry
+}
+
+type failEntry struct {
+	count   int
+	first   time.Time
+	blocked time.Time
+}
+
+const (
+	maxFails   = 10
+	failWindow = 10 * time.Minute
+	blockFor   = 10 * time.Minute
+)
+
+func newFailLimiter(now func() time.Time) *failLimiter {
+	return &failLimiter{now: now, m: map[string]*failEntry{}}
+}
+
+func (l *failLimiter) blockedFor(key string) time.Duration {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if e, ok := l.m[key]; ok {
+		if left := e.blocked.Sub(l.now()); left > 0 {
+			return left
+		}
+	}
+	return 0
+}
+
+func (l *failLimiter) fail(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	e := l.m[key]
+	if e == nil || now.Sub(e.first) > failWindow {
+		e = &failEntry{first: now}
+		l.m[key] = e
+	}
+	e.count++
+	if e.count >= maxFails {
+		e.blocked = now.Add(blockFor)
+		e.count, e.first = 0, now
+	}
+	if len(l.m) > 1000 {
+		for k, v := range l.m {
+			if now.Sub(v.first) > failWindow && now.After(v.blocked) {
+				delete(l.m, k)
+			}
+		}
+	}
+}
+
+func (l *failLimiter) reset(key string) {
+	l.mu.Lock()
+	delete(l.m, key)
+	l.mu.Unlock()
 }
 
 // ---- helpers JSON ----
@@ -192,7 +331,7 @@ func decode(w http.ResponseWriter, r *http.Request, dst any) bool {
 
 // ---- statut ----
 
-type spotifyStatus struct {
+type accountStatus struct {
 	Configured bool   `json:"configured"`
 	Connected  bool   `json:"connected"`
 	Account    string `json:"account,omitempty"`
@@ -201,16 +340,32 @@ type spotifyStatus struct {
 type statusResponse struct {
 	Channel      string        `json:"channel"`
 	BotConnected bool          `json:"bot_connected"`
-	Spotify      spotifyStatus `json:"spotify"`
+	BotError     string        `json:"bot_error,omitempty"`
+	Twitch       accountStatus `json:"twitch"`
+	Spotify      accountStatus `json:"spotify"`
+}
+
+func statusOf(a Account) accountStatus {
+	st := accountStatus{Configured: true, Connected: a.Connected()}
+	if st.Connected {
+		st.Account = a.Account()
+	}
+	return st
 }
 
 func (s *server) handleStatus(w http.ResponseWriter, _ *http.Request) {
-	resp := statusResponse{Channel: s.opts.Channel, BotConnected: s.bot != nil && s.bot.Connected()}
-	if s.spotify != nil {
-		resp.Spotify = spotifyStatus{Configured: true, Connected: s.spotify.Connected()}
-		if resp.Spotify.Connected {
-			resp.Spotify.Account = s.spotify.Account()
+	resp := statusResponse{Channel: s.opts.Channel}
+	if s.bot != nil {
+		resp.BotConnected = s.bot.Connected()
+		if !resp.BotConnected {
+			resp.BotError = s.bot.LastError()
 		}
+	}
+	if s.twitch != nil {
+		resp.Twitch = statusOf(s.twitch)
+	}
+	if s.spotify != nil {
+		resp.Spotify = statusOf(s.spotify)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -218,27 +373,68 @@ func (s *server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 // ---- commandes ----
 
 type commandBody struct {
-	Name            string `json:"name"`
-	Response        string `json:"response"`
-	CooldownSeconds *int   `json:"cooldown_seconds"`
+	Name                string   `json:"name"`
+	Response            string   `json:"response"`
+	CooldownSeconds     *int     `json:"cooldown_seconds"`
+	UserCooldownSeconds *int     `json:"user_cooldown_seconds"`
+	Permission          string   `json:"permission"`
+	Enabled             *bool    `json:"enabled"`
+	Aliases             []string `json:"aliases"`
 }
 
 // toCommand valide le corps et construit la commande. name est déjà normalisé.
 func (b commandBody) toCommand(name string) (model.Command, error) {
-	if err := commands.ValidateName(name); err != nil {
+	cmd, err := commands.New(name, b.Response)
+	if err != nil {
 		return model.Command{}, err
 	}
-	if err := commands.ValidateResponse(b.Response); err != nil {
-		return model.Command{}, err
-	}
-	cd := commands.DefaultCooldownSeconds
 	if b.CooldownSeconds != nil {
-		cd = *b.CooldownSeconds
+		cmd.CooldownSeconds = *b.CooldownSeconds
 	}
-	if err := commands.ValidateCooldown(cd); err != nil {
+	if b.UserCooldownSeconds != nil {
+		cmd.UserCooldownSeconds = *b.UserCooldownSeconds
+	}
+	for _, cd := range []int{cmd.CooldownSeconds, cmd.UserCooldownSeconds} {
+		if err := commands.ValidateCooldown(cd); err != nil {
+			return model.Command{}, err
+		}
+	}
+	if cmd.Permission, err = model.ParseLevel(b.Permission); err != nil {
 		return model.Command{}, err
 	}
-	return model.Command{Name: name, Response: strings.TrimSpace(b.Response), CooldownSeconds: cd}, nil
+	if b.Enabled != nil {
+		cmd.Enabled = *b.Enabled
+	}
+	if cmd.Aliases, err = commands.NormalizeAliases(cmd.Name, b.Aliases); err != nil {
+		return model.Command{}, err
+	}
+	return cmd, nil
+}
+
+// conflict renvoie la commande qui utilise déjà le nom ou un alias de cmd (hors cmd elle-même).
+func conflict(cmd model.Command, all []model.Command) (string, bool) {
+	taken := map[string]string{} // nom ou alias -> commande propriétaire
+	for _, c := range all {
+		if c.Name == cmd.Name {
+			continue
+		}
+		taken[c.Name] = c.Name
+		for _, a := range c.Aliases {
+			taken[a] = c.Name
+		}
+	}
+	for _, n := range append([]string{cmd.Name}, cmd.Aliases...) {
+		if owner, ok := taken[n]; ok {
+			return fmt.Sprintf("« %s » est déjà utilisé par !%s", n, owner), true
+		}
+	}
+	return "", false
+}
+
+func (s *server) commandsChanged() {
+	if s.opts.OnCommandsChanged != nil {
+		s.opts.OnCommandsChanged()
+	}
 }
 
 func (s *server) listCommands(w http.ResponseWriter, r *http.Request) {
@@ -263,6 +459,15 @@ func (s *server) createCommand(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	all, err := s.store.ListCommands(r.Context())
+	if err != nil {
+		serverErr(w, "création de la commande", err)
+		return
+	}
+	if msg, bad := conflict(cmd, all); bad {
+		writeErr(w, http.StatusConflict, msg)
+		return
+	}
 	switch err := s.store.AddCommand(r.Context(), cmd); {
 	case errors.Is(err, model.ErrExists):
 		writeErr(w, http.StatusConflict, "cette commande existe déjà")
@@ -270,6 +475,7 @@ func (s *server) createCommand(w http.ResponseWriter, r *http.Request) {
 		serverErr(w, "création de la commande", err)
 	default:
 		slog.Info("commande créée", "name", cmd.Name)
+		s.commandsChanged()
 		writeJSON(w, http.StatusCreated, cmd)
 	}
 }
@@ -284,6 +490,15 @@ func (s *server) updateCommand(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	all, err := s.store.ListCommands(r.Context())
+	if err != nil {
+		serverErr(w, "mise à jour de la commande", err)
+		return
+	}
+	if msg, bad := conflict(cmd, all); bad {
+		writeErr(w, http.StatusConflict, msg)
+		return
+	}
 	switch err := s.store.UpdateCommand(r.Context(), cmd); {
 	case errors.Is(err, model.ErrNotFound):
 		writeErr(w, http.StatusNotFound, "commande introuvable")
@@ -291,6 +506,7 @@ func (s *server) updateCommand(w http.ResponseWriter, r *http.Request) {
 		serverErr(w, "mise à jour de la commande", err)
 	default:
 		slog.Info("commande modifiée", "name", cmd.Name)
+		s.commandsChanged()
 		writeJSON(w, http.StatusOK, cmd)
 	}
 }
@@ -304,6 +520,7 @@ func (s *server) deleteCommand(w http.ResponseWriter, r *http.Request) {
 		serverErr(w, "suppression de la commande", err)
 	default:
 		slog.Info("commande supprimée", "name", name)
+		s.commandsChanged()
 		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 	}
 }
@@ -356,22 +573,134 @@ func (s *server) clearRequests(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "cleared"})
 }
 
-// ---- Spotify ----
+// ---- réglages de la musique ----
 
-func (s *server) requireSpotify(w http.ResponseWriter) bool {
+func (s *server) getMusicSettings(w http.ResponseWriter, r *http.Request) {
+	ms, err := s.store.GetMusicSettings(r.Context())
+	if err != nil {
+		serverErr(w, "lecture des réglages de la musique", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ms)
+}
+
+func (s *server) putMusicSettings(w http.ResponseWriter, r *http.Request) {
+	var ms model.MusicSettings
+	if !decode(w, r, &ms) {
+		return
+	}
+	if err := ms.Normalize(); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.store.SetMusicSettings(r.Context(), ms); err != nil {
+		serverErr(w, "enregistrement des réglages de la musique", err)
+		return
+	}
+	slog.Info("réglages de la musique modifiés")
+	writeJSON(w, http.StatusOK, ms)
+}
+
+// ---- file Spotify ----
+
+type trackDTO struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Artist          string `json:"artist"`
+	DurationSeconds int    `json:"duration_seconds"`
+	Explicit        bool   `json:"explicit"`
+}
+
+func toDTO(t chat.Track) trackDTO {
+	return trackDTO{ID: t.ID, Name: t.Name, Artist: t.Artist, DurationSeconds: int(t.Duration.Seconds()), Explicit: t.Explicit}
+}
+
+// spotifyErr traduit une erreur du lecteur en réponse HTTP.
+func spotifyErr(w http.ResponseWriter, what string, err error) {
+	switch {
+	case errors.Is(err, chat.ErrNotConnected):
+		writeErr(w, http.StatusConflict, "Spotify n'est pas connecté")
+	case errors.Is(err, chat.ErrNoDevice):
+		writeErr(w, http.StatusConflict, "aucun lecteur Spotify actif")
+	default:
+		slog.Error(what, "err", err)
+		writeErr(w, http.StatusBadGateway, "erreur Spotify")
+	}
+}
+
+func (s *server) spotifyQueue(w http.ResponseWriter, r *http.Request) {
 	if s.spotify == nil {
 		writeErr(w, http.StatusNotFound, "Spotify n'est pas configuré (SPOTIFY_ID / SPOTIFY_SECRET)")
+		return
+	}
+	pb, err := s.spotify.Playback(r.Context())
+	if err != nil {
+		spotifyErr(w, "lecture de la file Spotify", err)
+		return
+	}
+	resp := struct {
+		Current *trackDTO  `json:"current"`
+		Queue   []trackDTO `json:"queue"`
+	}{Queue: make([]trackDTO, 0, len(pb.Queue))}
+	if pb.Current != nil {
+		c := toDTO(*pb.Current)
+		resp.Current = &c
+	}
+	for _, t := range pb.Queue {
+		resp.Queue = append(resp.Queue, toDTO(t))
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *server) spotifySkip(w http.ResponseWriter, r *http.Request) {
+	if s.spotify == nil {
+		writeErr(w, http.StatusNotFound, "Spotify n'est pas configuré (SPOTIFY_ID / SPOTIFY_SECRET)")
+		return
+	}
+	if err := s.spotify.Skip(r.Context()); err != nil {
+		spotifyErr(w, "skip Spotify", err)
+		return
+	}
+	slog.Info("titre passé depuis l'administration")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "skipped"})
+}
+
+// ---- connexion OAuth (Spotify, Twitch) ----
+
+// oauth regroupe les routes de connexion d'un compte externe.
+type oauth struct {
+	s             *server
+	name          string // "spotify" ou "twitch" : nom de route, de cookie et de paramètre de retour
+	notConfigured string
+	account       Account // nil si non configuré
+	onChange      func()  // appelée après une connexion ou une déconnexion réussie
+}
+
+func (s *server) oauthFlow(name, notConfigured string, onChange func()) *oauth {
+	return &oauth{s: s, name: name, notConfigured: notConfigured, onChange: onChange}
+}
+
+func (o *oauth) cookie(r *http.Request, value string, maxAge int) *http.Cookie {
+	return &http.Cookie{
+		Name: "oauth_state_" + o.name, Value: value, Path: "/auth/" + o.name, MaxAge: maxAge,
+		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: o.s.isHTTPS(r),
+	}
+}
+
+func (o *oauth) require(w http.ResponseWriter) bool {
+	if o.account == nil {
+		writeErr(w, http.StatusNotFound, o.notConfigured)
 		return false
 	}
 	return true
 }
 
-func isHTTPS(r *http.Request) bool {
-	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+func (s *server) isHTTPS(r *http.Request) bool {
+	return r.TLS != nil || (s.opts.TrustProxy && r.Header.Get("X-Forwarded-Proto") == "https")
 }
 
-func (s *server) spotifyLogin(w http.ResponseWriter, r *http.Request) {
-	if !s.requireSpotify(w) {
+func (o *oauth) login(w http.ResponseWriter, r *http.Request) {
+	if !o.require(w) {
 		return
 	}
 	var b [16]byte
@@ -380,29 +709,24 @@ func (s *server) spotifyLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := hex.EncodeToString(b[:])
-	http.SetCookie(w, &http.Cookie{
-		Name: stateCookie, Value: state, Path: "/auth/spotify", MaxAge: 600,
-		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: isHTTPS(r),
-	})
-	http.Redirect(w, r, s.spotify.AuthURL(state), http.StatusFound)
+	http.SetCookie(w, o.cookie(r, state, 600))
+	http.Redirect(w, r, o.account.AuthURL(state), http.StatusFound)
 }
 
-func (s *server) spotifyCallback(w http.ResponseWriter, r *http.Request) {
-	if !s.requireSpotify(w) {
+func (o *oauth) callback(w http.ResponseWriter, r *http.Request) {
+	if !o.require(w) {
 		return
 	}
 	q := r.URL.Query()
-	c, err := r.Cookie(stateCookie)
+	c, err := r.Cookie("oauth_state_" + o.name)
 	if err != nil || c.Value == "" || subtle.ConstantTimeCompare([]byte(c.Value), []byte(q.Get("state"))) != 1 {
 		writeErr(w, http.StatusBadRequest, "paramètre state invalide, relance la connexion depuis la page d'administration")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name: stateCookie, Value: "", Path: "/auth/spotify", MaxAge: -1,
-		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: isHTTPS(r),
-	})
+	http.SetCookie(w, o.cookie(r, "", -1))
+	back := func(result string) { http.Redirect(w, r, "/?"+o.name+"="+result, http.StatusFound) }
 	if q.Get("error") != "" {
-		http.Redirect(w, r, "/?spotify=denied", http.StatusFound)
+		back("denied")
 		return
 	}
 	code := q.Get("code")
@@ -410,23 +734,29 @@ func (s *server) spotifyCallback(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "code manquant")
 		return
 	}
-	if err := s.spotify.Exchange(r.Context(), code); err != nil {
-		slog.Error("échange du code Spotify", "err", err)
-		http.Redirect(w, r, "/?spotify=error", http.StatusFound)
+	if err := o.account.Exchange(r.Context(), code); err != nil {
+		slog.Error("échange du code OAuth", "provider", o.name, "err", err)
+		back("error")
 		return
 	}
-	slog.Info("compte Spotify connecté")
-	http.Redirect(w, r, "/?spotify=connected", http.StatusFound)
+	slog.Info("compte connecté", "provider", o.name)
+	if o.onChange != nil {
+		o.onChange()
+	}
+	back("connected")
 }
 
-func (s *server) spotifyDisconnect(w http.ResponseWriter, r *http.Request) {
-	if !s.requireSpotify(w) {
+func (o *oauth) disconnect(w http.ResponseWriter, r *http.Request) {
+	if !o.require(w) {
 		return
 	}
-	if err := s.spotify.Disconnect(r.Context()); err != nil {
-		serverErr(w, "déconnexion de Spotify", err)
+	if err := o.account.Disconnect(r.Context()); err != nil {
+		serverErr(w, "déconnexion du compte "+o.name, err)
 		return
 	}
-	slog.Info("compte Spotify déconnecté")
+	slog.Info("compte déconnecté", "provider", o.name)
+	if o.onChange != nil {
+		o.onChange()
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "disconnected"})
 }

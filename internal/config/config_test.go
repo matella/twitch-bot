@@ -75,6 +75,8 @@ func TestLoadErrors(t *testing.T) {
 		"cooldown négatif":        func(m map[string]string) { m["SONG_COOLDOWN_SECONDS"] = "-5" },
 		"cooldown non numérique":  func(m map[string]string) { m["SONG_COOLDOWN_SECONDS"] = "vite" },
 		"cooldown trop grand":     func(m map[string]string) { m["SONG_COOLDOWN_SECONDS"] = "99999" },
+		"twitch incomplet":        func(m map[string]string) { m["TWITCH_CLIENT_ID"] = "x" },
+		"proxy invalide":          func(m map[string]string) { m["TRUST_PROXY"] = "peut-être" },
 	}
 	for name, mutate := range cases {
 		m := base()
@@ -101,5 +103,25 @@ func TestLoadSpotifyAndOverrides(t *testing.T) {
 	}
 	if c.SpotifyRedirectURL != "https://bot.exemple.be/auth/spotify/callback" {
 		t.Errorf("redirect = %q", c.SpotifyRedirectURL)
+	}
+}
+
+func TestLoadTwitchOAuthReplacesStaticToken(t *testing.T) {
+	m := map[string]string{
+		"TWITCH_CHANNEL":       "machaine",
+		"TWITCH_CLIENT_ID":     "id",
+		"TWITCH_CLIENT_SECRET": "secret",
+		"ADMIN_PASSWORD":       "un-mot-de-passe",
+		"TRUST_PROXY":          "true",
+	}
+	c, err := Load(env(m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.TwitchOAuthEnabled() || !c.TrustProxy {
+		t.Errorf("config = %+v", c)
+	}
+	if c.TwitchRedirectURL != "http://localhost:9090/auth/twitch/callback" {
+		t.Errorf("redirect = %q", c.TwitchRedirectURL)
 	}
 }

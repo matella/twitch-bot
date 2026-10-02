@@ -40,7 +40,7 @@ func TestNormalizeAndValidateName(t *testing.T) {
 			t.Errorf("ValidateName(%q) = %v, attendu nil", ok, err)
 		}
 	}
-	for _, bad := range []string{"", "a b", "a-b", "!x", "song", "sr", "queue", "help", strings.Repeat("a", 33)} {
+	for _, bad := range []string{"", "a b", "a-b", "!x", "song", "sr", "queue", "help", "skip", "np", "addcmd", strings.Repeat("a", 33)} {
 		if err := ValidateName(bad); err == nil {
 			t.Errorf("ValidateName(%q) = nil, attendu une erreur", bad)
 		}
@@ -66,10 +66,49 @@ func TestValidateResponseAndCooldown(t *testing.T) {
 }
 
 func TestRenderDoesNotReinterpretArgs(t *testing.T) {
-	got := Render("Salut {user} sur {channel} : {args}", "bob", "chan", "{user}")
+	got := Render("Salut {user} sur {channel} : {args}", Vars{User: "bob", Channel: "chan", Args: "{user}"})
 	want := "Salut bob sur chan : {user}"
 	if got != want {
 		t.Fatalf("Render = %q, attendu %q", got, want)
+	}
+}
+
+func TestRenderVariables(t *testing.T) {
+	v := Vars{User: "bob", Channel: "chan", Args: "@alice et plus", Count: 7, Intn: func(n int) int { return n - 1 }}
+	tests := []struct{ in, want string }{
+		{"{touser}", "alice"},
+		{"{count}e fois", "7e fois"},
+		{"{random}", "100"},
+		{"{pick: a | b | c }", "c"},
+		{"{inconnue}", "{inconnue}"},
+	}
+	for _, tt := range tests {
+		if got := Render(tt.in, v); got != tt.want {
+			t.Errorf("Render(%q) = %q, attendu %q", tt.in, got, tt.want)
+		}
+	}
+	if got := Render("{touser}", Vars{User: "bob"}); got != "bob" {
+		t.Errorf("{touser} sans argument = %q", got)
+	}
+}
+
+func TestRenderNeutralisesRelayedCommands(t *testing.T) {
+	got := Render("{args}", Vars{Args: "!nightbot-cmd /ban .mod x"})
+	if got != "nightbot-cmd ban mod x" {
+		t.Fatalf("Render = %q", got)
+	}
+}
+
+func TestNormalizeAliases(t *testing.T) {
+	got, err := NormalizeAliases("discord", []string{" !Dc ", "dc", "discord", "", "serveur"})
+	if err != nil || len(got) != 2 || got[0] != "dc" || got[1] != "serveur" {
+		t.Fatalf("NormalizeAliases = %v, %v", got, err)
+	}
+	if _, err := NormalizeAliases("x", []string{"song"}); err == nil {
+		t.Error("alias réservé accepté")
+	}
+	if _, err := NormalizeAliases("x", []string{"a b"}); err == nil {
+		t.Error("alias invalide accepté")
 	}
 }
 
