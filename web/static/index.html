@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Twitch Bot Admin</title>
+	<style>
+		* {
+			margin: 0;
+			padding: 0;
+			box-sizing: border-box;
+		}
+
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+			background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+			min-height: 100vh;
+			color: #333;
+		}
+
+		.container {
+			max-width: 1200px;
+			margin: 0 auto;
+			padding: 20px;
+		}
+
+		header {
+			background: white;
+			padding: 20px;
+			border-radius: 8px;
+			margin-bottom: 30px;
+			box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+		}
+
+		h1 {
+			color: #667eea;
+			margin-bottom: 10px;
+		}
+
+		.status {
+			display: flex;
+			align-items: center;
+			gap: 10px;
+			color: #666;
+			font-size: 14px;
+		}
+
+		.status-indicator {
+			width: 10px;
+			height: 10px;
+			border-radius: 50%;
+			background: #10b981;
+			animation: pulse 2s infinite;
+		}
+
+		@keyframes pulse {
+			0%, 100% { opacity: 1; }
+			50% { opacity: 0.5; }
+		}
+
+		.grid {
+			display: grid;
+			grid-template-columns: 1fr 1fr;
+			gap: 20px;
+			margin-bottom: 30px;
+		}
+
+		@media (max-width: 768px) {
+			.grid {
+				grid-template-columns: 1fr;
+			}
+		}
+
+		.panel {
+			background: white;
+			padding: 20px;
+			border-radius: 8px;
+			box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+		}
+
+		.panel h2 {
+			color: #667eea;
+			margin-bottom: 15px;
+			font-size: 18px;
+			border-bottom: 2px solid #667eea;
+			padding-bottom: 10px;
+		}
+
+		.form-group {
+			margin-bottom: 15px;
+		}
+
+		label {
+			display: block;
+			margin-bottom: 5px;
+			font-weight: 500;
+			color: #555;
+			font-size: 14px;
+		}
+
+		input, textarea, select {
+			width: 100%;
+			padding: 10px;
+			border: 1px solid #ddd;
+			border-radius: 4px;
+			font-family: inherit;
+			font-size: 14px;
+		}
+
+		input:focus, textarea:focus, select:focus {
+			outline: none;
+			border-color: #667eea;
+			box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+		}
+
+		textarea {
+			resize: vertical;
+			min-height: 80px;
+		}
+
+		button {
+			background: #667eea;
+			color: white;
+			border: none;
+			padding: 10px 20px;
+			border-radius: 4px;
+			cursor: pointer;
+			font-weight: 500;
+			font-size: 14px;
+			transition: background 0.3s;
+		}
+
+		button:hover {
+			background: #764ba2;
+		}
+
+		button.secondary {
+			background: #e0e7ff;
+			color: #667eea;
+		}
+
+		button.secondary:hover {
+			background: #c7d2f8;
+		}
+
+		button.danger {
+			background: #ef4444;
+		}
+
+		button.danger:hover {
+			background: #dc2626;
+		}
+
+		.list {
+			max-height: 400px;
+			overflow-y: auto;
+		}
+
+		.list-item {
+			background: #f9fafb;
+			padding: 12px;
+			border-radius: 4px;
+			margin-bottom: 10px;
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			gap: 10px;
+		}
+
+		.list-item-content {
+			flex: 1;
+		}
+
+		.list-item-title {
+			font-weight: 600;
+			color: #333;
+			margin-bottom: 4px;
+		}
+
+		.list-item-text {
+			font-size: 13px;
+			color: #666;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+		}
+
+		.list-item-actions {
+			display: flex;
+			gap: 8px;
+		}
+
+		.list-item-actions button {
+			padding: 6px 12px;
+			font-size: 12px;
+		}
+
+		.empty {
+			text-align: center;
+			padding: 30px;
+			color: #999;
+		}
+
+		.alert {
+			padding: 12px;
+			border-radius: 4px;
+			margin-bottom: 15px;
+			font-size: 14px;
+		}
+
+		.alert.success {
+			background: #d1fae5;
+			color: #065f46;
+			border: 1px solid #6ee7b7;
+		}
+
+		.alert.error {
+			background: #fee2e2;
+			color: #991b1b;
+			border: 1px solid #fca5a5;
+		}
+
+		.loading {
+			text-align: center;
+			padding: 20px;
+			color: #999;
+		}
+	</style>
+</head>
+<body>
+	<div class="container">
+		<header>
+			<h1>🎮 Twitch Bot Admin Panel</h1>
+			<div class="status">
+				<div class="status-indicator"></div>
+				<span>Bot Status: <strong id="bot-status">Loading...</strong></span>
+			</div>
+		</header>
+
+		<div class="grid">
+			<!-- Commands Panel -->
+			<div class="panel">
+				<h2>📋 Custom Commands</h2>
+				<div id="commands-alert"></div>
+
+				<div class="form-group">
+					<label for="cmd-name">Command Name</label>
+					<input type="text" id="cmd-name" placeholder="e.g., lurk, social" />
+				</div>
+
+				<div class="form-group">
+					<label for="cmd-response">Response</label>
+					<textarea id="cmd-response" placeholder="What the bot will say..."></textarea>
+				</div>
+
+				<button onclick="addCommand()">Add Command</button>
+
+				<div class="list" id="commands-list"></div>
+			</div>
+
+			<!-- Queue Panel -->
+			<div class="panel">
+				<h2>🎵 Song Queue</h2>
+				<div id="queue-alert"></div>
+
+				<button onclick="refreshQueue()" class="secondary" style="width: 100%; margin-bottom: 15px;">Refresh Queue</button>
+				<button onclick="clearQueue()" class="danger" style="width: 100%; margin-bottom: 15px;">Clear All</button>
+
+				<div class="list" id="queue-list"></div>
+			</div>
+		</div>
+	</div>
+
+	<script>
+		const API = 'http://localhost:8080/api';
+
+		// Update bot status
+		async function updateStatus() {
+			try {
+				const res = await fetch(`${API}/health`);
+				const data = await res.json();
+				document.getElementById('bot-status').textContent = data.data.bot_running ? '🟢 Online' : '🔴 Offline';
+			} catch (e) {
+				document.getElementById('bot-status').textContent = '🔴 Offline';
+			}
+		}
+
+		// Load commands
+		async function loadCommands() {
+			try {
+				const res = await fetch(`${API}/commands`);
+				const data = await res.json();
+
+				const list = document.getElementById('commands-list');
+				if (!data.data || data.data.length === 0) {
+					list.innerHTML = '<div class="empty">No commands yet</div>';
+					return;
+				}
+
+				list.innerHTML = data.data.map(cmd => `
+					<div class="list-item">
+						<div class="list-item-content">
+							<div class="list-item-title">!${cmd.name}</div>
+							<div class="list-item-text">${cmd.response}</div>
+						</div>
+						<div class="list-item-actions">
+							<button class="danger" onclick="deleteCommand('${cmd.name}')">Delete</button>
+						</div>
+					</div>
+				`).join('');
+			} catch (e) {
+				console.error(e);
+				document.getElementById('commands-list').innerHTML = '<div class="empty">Error loading commands</div>';
+			}
+		}
+
+		// Add command
+		async function addCommand() {
+			const name = document.getElementById('cmd-name').value.trim();
+			const response = document.getElementById('cmd-response').value.trim();
+
+			if (!name || !response) {
+				showAlert('commands-alert', 'Please fill in all fields', 'error');
+				return;
+			}
+
+			try {
+				const res = await fetch(`${API}/commands`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ name, response })
+				});
+
+				if (res.ok) {
+					document.getElementById('cmd-name').value = '';
+					document.getElementById('cmd-response').value = '';
+					showAlert('commands-alert', 'Command added!', 'success');
+					loadCommands();
+				} else {
+					showAlert('commands-alert', 'Error adding command', 'error');
+				}
+			} catch (e) {
+				showAlert('commands-alert', 'Error: ' + e.message, 'error');
+			}
+		}
+
+		// Delete command
+		async function deleteCommand(name) {
+			if (!confirm(`Delete command !${name}?`)) return;
+
+			try {
+				const res = await fetch(`${API}/commands/${name}`, { method: 'DELETE' });
+				if (res.ok) {
+					showAlert('commands-alert', 'Command deleted!', 'success');
+					loadCommands();
+				}
+			} catch (e) {
+				showAlert('commands-alert', 'Error: ' + e.message, 'error');
+			}
+		}
+
+		// Load queue
+		async function refreshQueue() {
+			try {
+				const res = await fetch(`${API}/queue`);
+				const data = await res.json();
+
+				const list = document.getElementById('queue-list');
+				if (!data.data || data.data.length === 0) {
+					list.innerHTML = '<div class="empty">Queue is empty</div>';
+					return;
+				}
+
+				list.innerHTML = data.data.map((song, i) => `
+					<div class="list-item">
+						<div class="list-item-content">
+							<div class="list-item-title">${song.track_name}</div>
+							<div class="list-item-text">${song.artist_name} · Requested by ${song.requested_by}</div>
+						</div>
+						<div class="list-item-actions">
+							<button class="danger" onclick="removeSong(${song.id})">Remove</button>
+						</div>
+					</div>
+				`).join('');
+			} catch (e) {
+				console.error(e);
+				document.getElementById('queue-list').innerHTML = '<div class="empty">Error loading queue</div>';
+			}
+		}
+
+		// Remove song
+		async function removeSong(id) {
+			try {
+				const res = await fetch(`${API}/queue/${id}`, { method: 'DELETE' });
+				if (res.ok) {
+					showAlert('queue-alert', 'Song removed!', 'success');
+					refreshQueue();
+				}
+			} catch (e) {
+				showAlert('queue-alert', 'Error: ' + e.message, 'error');
+			}
+		}
+
+		// Clear queue
+		async function clearQueue() {
+			if (!confirm('Clear entire queue?')) return;
+
+			try {
+				const res = await fetch(`${API}/queue`, { method: 'DELETE' });
+				if (res.ok) {
+					showAlert('queue-alert', 'Queue cleared!', 'success');
+					refreshQueue();
+				}
+			} catch (e) {
+				showAlert('queue-alert', 'Error: ' + e.message, 'error');
+			}
+		}
+
+		// Show alert
+		function showAlert(elementId, message, type) {
+			const el = document.getElementById(elementId);
+			el.innerHTML = `<div class="alert ${type}">${message}</div>`;
+			setTimeout(() => el.innerHTML = '', 3000);
+		}
+
+		// Initialize
+		setInterval(updateStatus, 5000);
+		updateStatus();
+		loadCommands();
+		refreshQueue();
+		setInterval(loadCommands, 10000);
+		setInterval(refreshQueue, 5000);
+	</script>
+</body>
+</html>
