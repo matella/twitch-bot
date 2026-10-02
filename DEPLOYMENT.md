@@ -16,7 +16,7 @@ nano .env        # TWITCH_CHANNEL, TWITCH_CLIENT_ID/SECRET, ADMIN_PASSWORD, et S
 chmod 600 .env
 ```
 
-Si le port 9090 est déjà pris sur matelab, décommente `HOST_PORT` dans `.env` et choisis-en un autre.
+Le port publié sur matelab est **9190** (`HOST_PORT` dans `.env` pour le changer) ; le port interne du conteneur reste 9090.
 
 ## 2. Lancer
 
@@ -38,16 +38,41 @@ Par défaut le port n'est publié que sur `127.0.0.1` de matelab, parce que l'au
 **Tunnel SSH (le plus simple)** — depuis ton PC :
 
 ```bash
-ssh -L 9090:127.0.0.1:9090 ton_user@matelab
+ssh -L 9090:127.0.0.1:9190 ton_user@matelab
 ```
 
 puis ouvre <http://127.0.0.1:9090> (identifiant `ADMIN_USER`, mot de passe `ADMIN_PASSWORD`). Si tu as changé `HOST_PORT`, utilise ce port côté matelab (`-L 9090:127.0.0.1:<HOST_PORT>`).
 
-**Reverse proxy HTTPS** — si matelab en a déjà un, fais-le pointer vers `127.0.0.1:<HOST_PORT>` (il doit conserver l'en-tête `Host` d'origine). Tu peux aussi mettre `BIND_ADDR=0.0.0.0` pour écouter sur le réseau local, mais seulement si tu acceptes le mot de passe en clair sur ce réseau.
+**Reverse proxy HTTPS (Nginx Proxy Manager)** — voir la section suivante. Tu peux aussi mettre `BIND_ADDR=0.0.0.0` pour écouter sur le réseau local, mais seulement si tu acceptes le mot de passe en clair sur ce réseau.
+
+### Nginx Proxy Manager
+
+1. **Joindre le bot depuis NPM.** `127.0.0.1` vu depuis le conteneur de NPM est NPM lui-même, donc le port publié en local ne lui sert à rien. Le plus propre : rattacher le bot au réseau Docker de NPM (nom visible avec `docker network ls`) :
+
+   ```bash
+   # dans .env, si le réseau ne s'appelle pas « npm_default » :  NPM_NETWORK=nom_du_reseau
+   docker compose -f docker-compose.yml -f docker-compose.npm.yml up -d --build
+   ```
+
+   Dans NPM, le bot est alors joignable à l'hôte `twitch-bot`, port `9090`. (Si NPM n'est pas dans Docker : cible `127.0.0.1` et le port `9190`.)
+
+2. **Proxy Host** dans NPM : *Domain Names* `ton-domaine`, *Scheme* `http`, *Forward Hostname* `twitch-bot`, *Forward Port* `9090`. Pas besoin de *Websockets Support*. Onglet *SSL* : certificat Let's Encrypt, *Force SSL* activé. NPM conserve l'en-tête `Host` d'origine, ce que le bot exige pour sa protection CSRF.
+
+3. **Dans `.env`** (puis `docker compose ... up -d`) :
+
+   ```
+   TRUST_PROXY=true
+   TWITCH_REDIRECT_URL=https://ton-domaine/auth/twitch/callback
+   SPOTIFY_REDIRECT_URL=https://ton-domaine/auth/spotify/callback
+   ```
+
+   `TRUST_PROXY=true` fait croire `X-Forwarded-Proto` (cookie « Secure ») et `X-Forwarded-For` (blocage des tentatives de connexion par client). N'active-le que parce que le bot n'est joignable que via NPM : ne laisse pas `BIND_ADDR=0.0.0.0` en même temps.
+
+4. Déclare ces deux URL de redirection dans la console Twitch et dans le dashboard Spotify (sections 3 bis et 4). L'authentification Basic reste active : l'accès est protégé par `ADMIN_PASSWORD` en plus du HTTPS ; une *Access List* NPM peut ajouter une couche (restriction par IP).
 
 ## 3 bis. Connecter le compte Twitch du bot (application Twitch)
 
-1. Dans la console Twitch, ouvre ton application → *OAuth Redirect URLs* et ajoute exactement `http://localhost:9090/auth/twitch/callback` (Twitch accepte `localhost` en HTTP, pas `127.0.0.1`). Avec le tunnel SSH, ouvre l'administration via `http://localhost:9090`. Avec un reverse proxy HTTPS, déclare plutôt `https://ton-domaine/auth/twitch/callback` **et** mets la même valeur dans `TWITCH_REDIRECT_URL`.
+1. Dans la console Twitch, ouvre ton application → *OAuth Redirect URLs* et ajoute exactement `https://ton-domaine/auth/twitch/callback` **et** mets la même valeur dans `TWITCH_REDIRECT_URL` (voir Nginx Proxy Manager ci-dessus). Sans reverse proxy, avec le tunnel SSH : `http://localhost:9090/auth/twitch/callback` (Twitch accepte `localhost` en HTTP, pas `127.0.0.1`), et ouvre l'administration via `http://localhost:9090`.
 2. Renseigne `TWITCH_CLIENT_ID` et `TWITCH_CLIENT_SECRET` dans `.env`, puis `docker compose up -d`.
 3. Dans l'administration, clique sur **Connecter** à côté de « Twitch », et connecte-toi avec le **compte du bot** (pas le tien ; Twitch redemande le compte à chaque fois). Le jeton est conservé en base et renouvelé automatiquement : à ne faire qu'une fois, sauf si tu révoques l'accès.
 

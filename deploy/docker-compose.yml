@@ -13,7 +13,7 @@ services:
     ports:
       # Par défaut uniquement en local (127.0.0.1) : l'authentification Basic circule en clair en HTTP.
       # Voir DEPLOYMENT.md pour l'accès distant (tunnel SSH ou reverse proxy HTTPS).
-      - "${BIND_ADDR:-127.0.0.1}:${HOST_PORT:-9090}:9090"
+      - "${BIND_ADDR:-127.0.0.1}:${HOST_PORT:-9190}:9090"
     volumes:
       - twitch-bot-data:/data
     cap_drop:

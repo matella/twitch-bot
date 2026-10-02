@@ -1,0 +1,17 @@
+# Rattache le bot au réseau Docker de Nginx Proxy Manager : NPM le joint alors directement
+# (hôte « twitch-bot », port 9090), sans rien exposer sur le réseau de matelab.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.npm.yml up -d --build
+#
+# NPM_NETWORK : nom du réseau de NPM (voir `docker network ls`, souvent « npm_default »
+# ou « nginx-proxy-manager_default »). À mettre dans .env si ce n'est pas « npm_default ».
+services:
+  twitch-bot:
+    networks:
+      - default
+      - npm
+
+networks:
+  npm:
+    name: ${NPM_NETWORK:-npm_default}
+    external: true
