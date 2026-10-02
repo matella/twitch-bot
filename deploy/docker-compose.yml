@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  twitch-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: twitch-bot
+    restart: unless-stopped
+
+    # Environment variables
+    environment:
+      TWITCH_CHANNEL: ${TWITCH_CHANNEL}
+      TWITCH_USERNAME: ${TWITCH_USERNAME}
+      TWITCH_TOKEN: ${TWITCH_TOKEN}
+      SPOTIFY_ID: ${SPOTIFY_ID}
+      SPOTIFY_SECRET: ${SPOTIFY_SECRET}
+
+    # Ports
+    ports:
+      - "9090:9090"
+
+    # Volumes for persistent data
+    volumes:
+      - twitch-bot-data:/data
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  twitch-bot-data:
+    driver: local
