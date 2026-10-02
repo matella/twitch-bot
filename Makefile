@@ -1,31 +1,20 @@
-.PHONY: build run clean
+SHELL := /bin/bash
+
+.PHONY: build test vet tidy run
 
 build:
-	go build -o bin/twitch-bot ./cmd
-
-run: build
-	./bin/twitch-bot \
-		-channel="your_channel" \
-		-username="your_bot_username" \
-		-token="your_oauth_token" \
-		-spotify-id="your_spotify_id" \
-		-spotify-secret="your_spotify_secret"
-
-dev:
-	go run ./cmd/main.go \
-		-channel="your_channel" \
-		-username="your_bot_username" \
-		-token="your_oauth_token" \
-		-spotify-id="your_spotify_id" \
-		-spotify-secret="your_spotify_secret"
-
-clean:
-	rm -rf bin/
-	rm -f bot.db
-
-deps:
-	go mod download
-	go mod tidy
+	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/twitch-bot ./cmd/twitch-bot
 
 test:
 	go test ./...
+
+vet:
+	go vet ./...
+
+# Résout les dépendances et écrit go.mod / go.sum (à commiter).
+tidy:
+	go mod tidy
+
+# Lance le bot en local avec la configuration de deploy/.env
+run: build
+	@set -a && source deploy/.env && set +a && ./bin/twitch-bot

@@ -1,374 +1,90 @@
-# Deployment Guide for matelab
+# Déploiement sur matelab (Docker Compose)
 
-This guide covers deploying the Twitch Bot to your matelab infrastructure.
+## Prérequis
 
-## Prerequisites
+- Docker avec le plugin Compose (`docker compose version`).
+- Un compte Twitch pour le bot, avec un jeton OAuth (scopes `chat:read` et `chat:edit`). Un générateur tiers comme twitchtokengenerator.com fait l'affaire ; une application Twitch à toi est plus propre. Ce jeton donne accès au chat au nom du bot : ne le partage pas.
+- (Pour la musique) un compte **Spotify Premium** et une application créée sur <https://developer.spotify.com/dashboard>.
 
-- Ubuntu/Debian-based Linux system
-- Docker & Docker Compose (recommended), OR Go 1.21+
-- Root or sudo access
-- Git installed
-
-## Quick Deploy (Recommended - Docker)
-
-### 1. SSH into matelab
-
-```bash
-ssh user@matelab
-```
-
-### 2. Clone the repository
+## 1. Récupérer et configurer
 
 ```bash
 git clone https://github.com/matella/twitch-bot.git
-cd twitch-bot
+cd twitch-bot/deploy
+cp .env.example .env
+nano .env        # TWITCH_*, ADMIN_PASSWORD, et SPOTIFY_* si besoin
+chmod 600 .env
 ```
 
-### 3. Create configuration file
+Si le port 9090 est déjà pris sur matelab, décommente `HOST_PORT` dans `.env` et choisis-en un autre.
+
+## 2. Lancer
 
 ```bash
-cp deploy/.env.example deploy/.env
-nano deploy/.env
+docker compose up -d --build
+docker compose logs -f
 ```
 
-Edit the file with your credentials:
+Au premier lancement, les dépendances Go sont résolues pendant le build (`go mod tidy`) : il faut donc un accès réseau, et les versions retenues sont les plus récentes à ce moment-là. Pour les figer, voir « Figer les dépendances » plus bas.
 
-```env
-TWITCH_CHANNEL=your_twitch_channel
-TWITCH_USERNAME=your_bot_username
-TWITCH_TOKEN=your_oauth_token
+Logs attendus : `interface d'administration`, puis `connecté à Twitch`. Si le bot s'arrête avec `login authentication failed`, le jeton ou le nom du bot est incorrect.
 
-SPOTIFY_ID=your_spotify_client_id
-SPOTIFY_SECRET=your_spotify_client_secret
-```
+## 3. Accéder à l'administration
 
-### 4. Deploy with Docker Compose
+Par défaut le port n'est publié que sur `127.0.0.1` de matelab, parce que l'authentification Basic circule en clair en HTTP. Deux façons d'y accéder :
+
+**Tunnel SSH (le plus simple)** — depuis ton PC :
 
 ```bash
-cd deploy
-docker-compose up -d
+ssh -L 9090:127.0.0.1:9090 ton_user@matelab
 ```
 
-### 5. Verify it's running
+puis ouvre <http://127.0.0.1:9090> (identifiant `ADMIN_USER`, mot de passe `ADMIN_PASSWORD`). Si tu as changé `HOST_PORT`, utilise ce port côté matelab (`-L 9090:127.0.0.1:<HOST_PORT>`).
+
+**Reverse proxy HTTPS** — si matelab en a déjà un, fais-le pointer vers `127.0.0.1:<HOST_PORT>` (il doit conserver l'en-tête `Host` d'origine). Tu peux aussi mettre `BIND_ADDR=0.0.0.0` pour écouter sur le réseau local, mais seulement si tu acceptes le mot de passe en clair sur ce réseau.
+
+## 4. Connecter Spotify
+
+1. Dans le dashboard Spotify, ouvre ton application → *Settings* → *Redirect URIs* et ajoute exactement :
+   `http://127.0.0.1:9090/auth/spotify/callback`
+   (adapte le port si besoin). Spotify n'accepte plus `localhost` ni le HTTP simple, **sauf** l'adresse de boucle `http://127.0.0.1` : c'est pour cela que le tunnel SSH fonctionne tel quel. Avec un reverse proxy HTTPS, déclare plutôt `https://ton-domaine/auth/spotify/callback` **et** mets la même valeur dans `SPOTIFY_REDIRECT_URL`.
+2. Renseigne `SPOTIFY_ID` et `SPOTIFY_SECRET` dans `.env`, puis `docker compose up -d`.
+3. Dans l'administration, clique sur **Connecter Spotify** et accepte. Le jeton est conservé en base et renouvelé automatiquement : à ne faire qu'une fois.
+4. Ouvre Spotify sur un appareil (un lecteur actif est nécessaire pour ajouter à la file), puis teste `!song daft punk one more time` dans le chat.
+
+## Exploitation
+
+| Action | Commande (dans `deploy/`) |
+| --- | --- |
+| Logs | `docker compose logs -f` |
+| État / santé | `docker compose ps` |
+| Redémarrer | `docker compose restart` |
+| Mettre à jour | `git pull && docker compose up -d --build` |
+| Arrêter | `docker compose down` (les données restent dans le volume) |
+
+### Sauvegarde
+
+La base (commandes, historique, jeton Spotify) est dans le volume `/data`. Arrête le conteneur pour copier un fichier cohérent :
 
 ```bash
-docker-compose logs -f twitch-bot
+docker compose stop
+docker compose cp twitch-bot:/data/bot.db ./bot-$(date +%F).db
+docker compose start
 ```
 
-Access the admin dashboard at: **http://matelab:9090**
+Cette copie contient le jeton Spotify en clair : garde-la en lieu sûr.
 
----
+### Figer les dépendances
 
-## Manual Deploy (Systemd)
+Pour un build reproductible, commite `go.mod` et `go.sum` une fois résolus, sur une machine avec Go : `go mod tidy && git add go.mod go.sum && git commit`. Le workflow GitHub Actions (`.github/workflows/ci.yml`) les publie aussi en artefact `go-deps` à chaque exécution.
 
-### 1. Prepare configuration
+## Dépannage
 
-```bash
-# Create environment file
-sudo mkdir -p /opt/twitch-bot
-sudo nano /opt/twitch-bot/.env
-```
-
-Add your credentials:
-```env
-TWITCH_CHANNEL=your_channel
-TWITCH_USERNAME=your_bot
-TWITCH_TOKEN=your_token
-SPOTIFY_ID=your_id
-SPOTIFY_SECRET=your_secret
-```
-
-### 2. Run automated deployment script
-
-```bash
-sudo bash deploy/deploy.sh
-```
-
-The script will:
-- Create the `twitch-bot` system user
-- Clone the latest code from GitHub
-- Build the binary (using Go or Docker)
-- Install the systemd service
-- Start the service
-
-### 3. Verify deployment
-
-```bash
-# Check service status
-systemctl status twitch-bot
-
-# View logs
-journalctl -u twitch-bot -f
-
-# Health check
-curl http://localhost:9090/api/health
-```
-
----
-
-## Configuration Files
-
-### Environment Variables (`.env`)
-
-Located in the deploy directory or passed to Docker:
-
-```env
-# Twitch
-TWITCH_CHANNEL=your_channel_name
-TWITCH_USERNAME=your_bot_username
-TWITCH_TOKEN=oauth:xxxxxxxxxxxx
-
-# Spotify (optional)
-SPOTIFY_ID=your_client_id
-SPOTIFY_SECRET=your_client_secret
-```
-
-Get your credentials:
-- **Twitch Token**: https://twitchtokengenerator.com/ (scopes: chat:read, chat:edit)
-- **Spotify ID/Secret**: https://developer.spotify.com/dashboard → Create App
-
-### Systemd Service File
-
-Located at: `/etc/systemd/system/twitch-bot.service`
-
-Edit with:
-```bash
-sudo systemctl edit twitch-bot
-```
-
----
-
-## Management Commands
-
-### Using Docker Compose
-
-```bash
-# Start
-docker-compose -f deploy/docker-compose.yml up -d
-
-# Stop
-docker-compose -f deploy/docker-compose.yml down
-
-# View logs
-docker-compose -f deploy/docker-compose.yml logs -f
-
-# Restart
-docker-compose -f deploy/docker-compose.yml restart
-
-# Update to latest
-docker-compose -f deploy/docker-compose.yml down
-git pull
-docker-compose -f deploy/docker-compose.yml up -d --build
-```
-
-### Using Systemd
-
-```bash
-# Start
-sudo systemctl start twitch-bot
-
-# Stop
-sudo systemctl stop twitch-bot
-
-# Restart
-sudo systemctl restart twitch-bot
-
-# View logs (latest 50 lines)
-journalctl -u twitch-bot -n 50
-
-# Follow logs (tail -f)
-journalctl -u twitch-bot -f
-
-# Service status
-systemctl status twitch-bot
-
-# Enable on boot
-sudo systemctl enable twitch-bot
-```
-
----
-
-## Updating
-
-### Docker Compose
-
-```bash
-cd deploy
-docker-compose down
-git pull origin main
-docker-compose up -d --build
-```
-
-### Systemd
-
-```bash
-cd /opt/twitch-bot
-sudo systemctl stop twitch-bot
-git pull origin main
-go build -o twitch-bot ./cmd
-sudo systemctl start twitch-bot
-```
-
-Or use the deployment script:
-```bash
-sudo bash deploy/deploy.sh
-```
-
----
-
-## Troubleshooting
-
-### Service won't start
-
-Check logs:
-```bash
-journalctl -u twitch-bot -n 100
-```
-
-### Port already in use
-
-Change the port:
-```bash
-# Systemd
-sudo systemctl edit twitch-bot
-# Add or modify: ExecStart=/opt/twitch-bot/twitch-bot -port=9091 ...
-
-# Docker Compose
-# Edit deploy/docker-compose.yml and change: ports: - "9091:9090"
-```
-
-### Database locked error
-
-Ensure only one instance is running:
-```bash
-# Systemd
-sudo systemctl restart twitch-bot
-
-# Docker
-docker-compose restart twitch-bot
-```
-
-### Can't connect to Twitch
-
-1. Verify token is valid
-2. Check if token has chat scopes
-3. Verify channel name is correct
-4. Check logs for details
-
-### Spotify integration not working
-
-1. Verify client ID and secret are correct
-2. Check if Spotify app is enabled in Developer Dashboard
-3. Ensure rate limits aren't exceeded (search one track per second max)
-
----
-
-## Monitoring
-
-### Health Check
-
-```bash
-curl http://localhost:9090/api/health
-```
-
-Response:
-```json
-{
-  "success": true,
-  "data": {
-    "status": "ok",
-    "bot_running": true
-  }
-}
-```
-
-### Admin Dashboard
-
-Access at: `http://matelab:9090`
-
-Features:
-- Real-time bot status
-- Manage commands
-- View/manage song queue
-- Bot statistics
-
----
-
-## Performance & Resources
-
-Typical resource usage:
-- **Memory**: 40-80 MB
-- **CPU**: <5% on idle
-- **Disk**: ~10 MB (executable + database)
-
-Resource limits (systemd):
-- Memory: 256 MB (can adjust in service file)
-- CPU: 50% quota (can adjust in service file)
-
----
-
-## Security Considerations
-
-1. **Environment Variables**
-   - Never commit `.env` files
-   - Restrict file permissions: `chmod 600 .env`
-   - Use strong, unique tokens
-
-2. **Service User**
-   - Bot runs as `twitch-bot` (unprivileged user)
-   - Limited filesystem access
-
-3. **Port Access**
-   - Admin dashboard on port 9090
-   - Only expose behind reverse proxy in production
-   - Use firewall rules to restrict access
-
-4. **Database**
-   - Located in `/var/lib/twitch-bot/bot.db`
-   - Only readable by twitch-bot user
-   - Backed up regularly (recommended)
-
----
-
-## Backup & Restore
-
-### Backup Database
-
-```bash
-# Systemd
-sudo cp /var/lib/twitch-bot/bot.db /backup/twitch-bot-$(date +%Y%m%d).db
-
-# Docker
-docker cp twitch-bot:/data/bot.db ./backup/twitch-bot-$(date +%Y%m%d).db
-```
-
-### Restore Database
-
-```bash
-# Systemd
-sudo cp /backup/twitch-bot-YYYYMMDD.db /var/lib/twitch-bot/bot.db
-sudo chown twitch-bot:twitch-bot /var/lib/twitch-bot/bot.db
-sudo systemctl restart twitch-bot
-
-# Docker
-docker cp ./backup/twitch-bot-YYYYMMDD.db twitch-bot:/data/bot.db
-docker restart twitch-bot
-```
-
----
-
-## Getting Help
-
-- **GitHub Issues**: https://github.com/matella/twitch-bot/issues
-- **Logs**: `journalctl -u twitch-bot -f` (systemd) or `docker-compose logs -f` (Docker)
-- **Health Check**: `curl http://localhost:9090/api/health`
-
----
-
-## Next Steps
-
-1. Access the admin dashboard at `http://matelab:9090`
-2. Test with custom commands: `!help`
-3. Add your first song request: `!song artist song`
-4. Create custom commands in the dashboard
-5. Configure Twitch channel points integration (future)
+| Symptôme | Piste |
+| --- | --- |
+| `variables d'environnement manquantes` | Compléter `.env`, puis `docker compose up -d`. |
+| `bind: address already in use` | Changer `HOST_PORT` dans `.env`. |
+| `login authentication failed` | Jeton Twitch invalide ou sans les scopes `chat:read` / `chat:edit`, ou `TWITCH_USERNAME` qui ne correspond pas au compte du jeton. |
+| `INVALID_CLIENT: Invalid redirect URI` chez Spotify | L'URI déclarée dans le dashboard n'est pas identique, au caractère près, à `SPOTIFY_REDIRECT_URL`. |
+| « aucun lecteur Spotify actif » dans le chat | Ouvrir Spotify sur un appareil et lancer une lecture. |
+| L'administration redemande le mot de passe en boucle | Vérifier `ADMIN_USER` / `ADMIN_PASSWORD` dans `.env` (puis recréer le conteneur). |

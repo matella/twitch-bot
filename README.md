@@ -1,217 +1,88 @@
-# Twitch Bot
+# twitch-bot
 
-A high-performance, self-hosted Twitch bot built in Go with Spotify integration and admin web dashboard.
+Bot Twitch maison (dans l'esprit de Nightbot / StreamElements) pour tourner sur ton homelab :
 
-## Features
+- **commandes personnalisées** (`!discord`, `!lurk`…) avec variables `{user}`, `{channel}`, `{args}` et délai par commande ;
+- **demandes de musique Spotify** : `!song <titre ou lien Spotify>` ajoute le titre à la **vraie file de lecture** de ton compte ;
+- **site d'administration** (protégé par mot de passe) pour gérer les commandes, voir l'historique des demandes et connecter Spotify.
 
-- **Custom Commands** — Create and manage chat commands with custom responses
-- **Spotify Integration** — Song requests directly from chat with `!song` command
-- **Song Queue** — Manage requested songs with a web admin panel
-- **Admin Dashboard** — Beautiful web UI to manage commands, queue, and settings
-- **Single Binary** — Compiled Go binary runs without dependencies
-- **Low Resource Usage** — ~40MB RAM, minimal CPU footprint
-- **High Performance** — Sub-millisecond bot response times
+Un seul binaire Go, un seul processus, SQLite pour le stockage, interface web embarquée dans le binaire.
 
-## Architecture
+## Commandes du chat
 
-Single-process design with:
-- **Twitch IRC Client** — Real-time chat connection
-- **REST API** — Admin endpoints for commands/queue/settings
-- **SQLite Database** — Persistent storage
-- **Spotify API** — Track search and management
-- **Static Web Server** — Embedded admin dashboard
+| Commande | Effet |
+| --- | --- |
+| `!song <titre>` ou `!sr <titre>` | Cherche le titre (ou lit le lien/URI Spotify) et l'ajoute à la file Spotify. Un délai s'applique par spectateur (30 s par défaut). |
+| `!queue` | Affiche les dernières demandes enregistrées par le bot. |
+| `!help` | Liste les commandes disponibles, personnalisées comprises. |
+| `!<nom>` | Répond avec le texte configuré dans l'administration. |
 
-## Requirements
-
-- Go 1.21+
-- Twitch account with bot user
-- Spotify API credentials (optional, for song requests)
-
-## Installation
-
-```bash
-git clone https://github.com/matella/twitch-bot.git
-cd twitch-bot
-go mod download
-make build
-```
+Les messages du bot sont en français ; ils sont regroupés dans `internal/chat/handler.go`.
 
 ## Configuration
 
-You need:
+Tout passe par des variables d'environnement (jamais par la ligne de commande, pour ne pas exposer les secrets). Modèle complet : [`deploy/.env.example`](deploy/.env.example).
 
-1. **Twitch OAuth Token** — [Get here](https://twitchtokengenerator.com/)
-   - Scopes needed: `chat:read`, `chat:edit`
+| Variable | Obligatoire | Description |
+| --- | --- | --- |
+| `TWITCH_CHANNEL` | oui | Chaîne à rejoindre (sans `#`). |
+| `TWITCH_USERNAME` | oui | Compte Twitch du bot. |
+| `TWITCH_TOKEN` | oui | Jeton OAuth du compte du bot (`chat:read`, `chat:edit`). |
+| `ADMIN_PASSWORD` | oui | Mot de passe de l'administration (8 caractères minimum). |
+| `ADMIN_USER` | non | Identifiant admin (défaut : `admin`). |
+| `SPOTIFY_ID`, `SPOTIFY_SECRET` | non | Application Spotify. Sans elles, les demandes de musique sont désactivées. |
+| `SPOTIFY_REDIRECT_URL` | non | Défaut : `http://127.0.0.1:<PORT>/auth/spotify/callback`. |
+| `SONG_COOLDOWN_SECONDS` | non | Délai entre deux demandes d'un même spectateur (défaut : 30). |
+| `PORT` | non | Port d'écoute du binaire (défaut : 9090). |
+| `DB_PATH` | non | Fichier SQLite (défaut : `bot.db`). |
 
-2. **Spotify Credentials** (optional)
-   - Client ID & Secret from [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
-   - Create an "Application" to get credentials
+## Démarrage
 
-## Usage
+Déploiement sur le homelab avec Docker Compose : voir [DEPLOYMENT.md](DEPLOYMENT.md).
 
-```bash
-./bin/twitch-bot \
-  -channel="your_twitch_channel" \
-  -username="your_bot_username" \
-  -token="your_oauth_token" \
-  -spotify-id="your_spotify_client_id" \
-  -spotify-secret="your_spotify_client_secret"
-```
-
-Or use the Makefile:
-
-```bash
-make run  # with credentials in Makefile
-make dev  # development mode with live reload
-```
-
-## Web Admin Panel
-
-Once running, access the dashboard at: **http://localhost:9090**
-
-### Features:
-- View bot status
-- Add/edit/delete custom commands
-- View and manage song queue
-- Clear queue
-- Real-time queue updates
-
-## API Endpoints
-
-### Health
-- `GET /api/health` — Bot status
-
-### Commands
-- `GET /api/commands` — List all commands
-- `POST /api/commands` — Create new command
-  ```json
-  {"name": "lurk", "response": "Thanks for lurking!"}
-  ```
-- `GET /api/commands/{name}` — Get specific command
-- `PUT /api/commands/{name}` — Update command
-- `DELETE /api/commands/{name}` — Delete command
-
-### Queue
-- `GET /api/queue` — Get current queue (max 50 songs)
-- `DELETE /api/queue` — Clear entire queue
-- `DELETE /api/queue/{id}` — Remove specific song
-
-### Settings
-- `GET /api/settings` — Get bot settings
-- `POST /api/settings` — Update settings
-
-## Chat Commands
-
-- `!song <artist> <name>` — Request a song
-- `!queue` — Show current queue
-- `!help` — Show available commands
-- `!<custom>` — Any custom command you create
-
-## Performance
-
-- Memory: ~40MB baseline
-- Startup: <100ms
-- Chat response: <5ms
-- SQLite queries: <1ms (typical)
-- API response: <2ms
-
-## Development
+En local, avec Go installé :
 
 ```bash
-# Run tests
-make test
-
-# Clean build artifacts
-make clean
-
-# Download dependencies
-make deps
+cp deploy/.env.example deploy/.env   # puis remplir
+make tidy                            # résout les dépendances (écrit go.mod / go.sum)
+make run
 ```
 
-## Project Structure
+## Sécurité
 
-```
-twitch-bot/
-├── cmd/
-│   └── main.go              # Entry point
-├── internal/
-│   ├── bot/
-│   │   └── bot.go           # Twitch bot logic
-│   ├── db/
-│   │   └── db.go            # SQLite database layer
-│   ├── server/
-│   │   └── server.go        # Admin web server
-│   └── spotify/
-│       └── spotify.go       # Spotify API client
-├── web/
-│   └── static/
-│       └── index.html       # Admin dashboard
-├── go.mod
-├── go.sum
-├── Makefile
-└── README.md
-```
+- Toute l'administration exige une authentification HTTP Basic, sauf `/api/health` (qui ne renvoie que `ok`).
+- HTTP Basic envoie le mot de passe en clair : n'expose le port que sur `127.0.0.1` (tunnel SSH) ou derrière un reverse proxy HTTPS.
+- Les requêtes modifiantes venant d'un autre site sont refusées (en-têtes `Sec-Fetch-Site` / `Origin`, `Content-Type: application/json` obligatoire).
+- Les messages envoyés au chat sont nettoyés : un `/` ou `.` initial est retiré, pour qu'un spectateur ne puisse pas faire exécuter `/ban` ou `/timeout` au bot s'il est modérateur.
+- Le jeton Spotify (refresh token) est stocké **en clair** dans la base SQLite : protège le volume `/data` et ses sauvegardes.
 
-## Deployment on matelab
+## Limites connues
 
-### Docker (recommended)
+- Le délai d'une commande personnalisée est **global** (pas par spectateur) ; celui de `!song` est par spectateur.
+- `!queue` montre l'historique des demandes passées par le bot, pas la file Spotify réelle.
+- Ajouter à la file Spotify exige un compte **Spotify Premium** et un lecteur Spotify actif (appli ouverte sur un appareil).
+- L'indicateur « connecté » de l'administration reflète la dernière connexion réussie à Twitch ; la bibliothèque se reconnecte seule en cas de coupure.
+- Pas encore de restriction par rôle (abonnés, modérateurs) ni de file d'attente avec vote/skip.
 
-```dockerfile
-FROM golang:1.21-alpine AS builder
-WORKDIR /app
-COPY . .
-RUN go build -o twitch-bot ./cmd
+## Développement
 
-FROM alpine:latest
-WORKDIR /app
-COPY --from=builder /app/twitch-bot .
-COPY web/ ./web/
-EXPOSE 9090
-ENTRYPOINT ["./twitch-bot"]
-```
-
-Build and run:
 ```bash
-docker build -t twitch-bot .
-docker run -d \
-  -p 9090:9090 \
-  -e CHANNEL=your_channel \
-  -e USERNAME=your_bot \
-  -e TOKEN=your_token \
-  twitch-bot
+go test ./...   # nécessite l'accès aux modules Go (proxy.golang.org)
+go vet ./...
 ```
 
-### Systemd Service
+Organisation du code :
 
-Create `/etc/systemd/system/twitch-bot.service`:
-
-```ini
-[Unit]
-Description=Twitch Bot
-After=network.target
-
-[Service]
-Type=simple
-User=twitch-bot
-WorkingDirectory=/home/twitch-bot/bot
-ExecStart=/home/twitch-bot/bot/bin/twitch-bot \
-  -channel=your_channel \
-  -username=your_bot \
-  -token=your_token
-
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
+```
+cmd/twitch-bot/     point d'entrée (+ sous-commande « healthcheck »)
+internal/config/    lecture et validation des variables d'environnement
+internal/commands/  parsing, validation, variables, nettoyage des messages (logique pure)
+internal/chat/      logique du bot, indépendante de Twitch et de Spotify (logique pure)
+internal/server/    API d'administration + authentification (bibliothèque standard uniquement)
+internal/store/     SQLite (driver Go pur, sans CGO)
+internal/spotify/   OAuth Spotify, recherche, file de lecture
+internal/bot/       client Twitch IRC
+web/static/         interface d'administration (embarquée dans le binaire)
 ```
 
-Enable and start:
-```bash
-sudo systemctl enable twitch-bot
-sudo systemctl start twitch-bot
-```
-
-## License
-
-MIT
+Les paquets « logique pure » et `server` se testent sans dépendance externe.

@@ -1,54 +1,30 @@
-version: '3.8'
-
 services:
   twitch-bot:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: deploy/Dockerfile
     container_name: twitch-bot
     restart: unless-stopped
-
-    # Environment variables
+    env_file: .env
     environment:
-      TWITCH_CHANNEL: ${TWITCH_CHANNEL}
-      TWITCH_USERNAME: ${TWITCH_USERNAME}
-      TWITCH_TOKEN: ${TWITCH_TOKEN}
-      SPOTIFY_ID: ${SPOTIFY_ID}
-      SPOTIFY_SECRET: ${SPOTIFY_SECRET}
-
-    # Ports
+      # Fixés ici : le port interne ne change jamais, seul HOST_PORT (côté hôte) est configurable.
+      PORT: "9090"
+      DB_PATH: /data/bot.db
     ports:
-      - "9090:9090"
-
-    # Volumes for persistent data
+      # Par défaut uniquement en local (127.0.0.1) : l'authentification Basic circule en clair en HTTP.
+      # Voir DEPLOYMENT.md pour l'accès distant (tunnel SSH ou reverse proxy HTTPS).
+      - "${BIND_ADDR:-127.0.0.1}:${HOST_PORT:-9090}:9090"
     volumes:
       - twitch-bot-data:/data
-
-    # Resource limits
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-        reservations:
-          cpus: '0.25'
-          memory: 128M
-
-    # Logging
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     logging:
-      driver: "json-file"
+      driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
 
-    # Health check
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9090/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
 volumes:
   twitch-bot-data:
-    driver: local
