@@ -4,11 +4,12 @@
 FROM golang:1.26-alpine AS build
 ENV GOTOOLCHAIN=auto
 WORKDIR /src
+# Dépendances d'abord : cette couche reste en cache tant que go.mod / go.sum ne changent pas.
+# Les versions sont figées dans le dépôt (go.sum est écrit par la CI).
+COPY go.mod go.sum ./
+RUN go mod download
 COPY . .
-# Tant que go.sum n'est pas commité, « go mod tidy » résout les dépendances.
-# Une fois go.mod / go.sum complets dans le dépôt (la CI les y écrit), cette commande ne change plus rien.
-RUN go mod tidy \
- && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/twitch-bot ./cmd/twitch-bot
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/twitch-bot ./cmd/twitch-bot
 
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata \

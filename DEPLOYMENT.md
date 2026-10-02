@@ -25,7 +25,7 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-Le build télécharge les dépendances Go : il faut un accès réseau. Si `go.sum` est absent du dépôt, `go mod tidy` les résout pendant le build (voir « Dépendances » plus bas).
+Le build télécharge les dépendances Go (versions figées dans `go.sum`) : il faut un accès réseau.
 
 Logs attendus : `interface d'administration`, puis `connecté à Twitch`. Si le bot s'arrête avec `login authentication failed`, le jeton ou le nom du bot est incorrect.
 

@@ -33,3 +33,16 @@ jobs:
             git commit -m "chore: fige go.mod et go.sum [skip ci]"
             git push
           fi
+
+  # Construit réellement l'image de déploiement, comme sur matelab.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f deploy/Dockerfile -t twitch-bot:ci .
+      - name: Smoke test (sans configuration, le binaire doit s'arrêter avec un message clair)
+        run: |
+          set +e
+          out=$(docker run --rm twitch-bot:ci 2>&1); code=$?
+          echo "$out"
+          [ "$code" -eq 1 ] && echo "$out" | grep -q "variables d'environnement manquantes"
