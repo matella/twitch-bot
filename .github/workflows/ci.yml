@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      # Tant que go.sum n'est pas commité, on le génère ici pour pouvoir compiler et tester.
+      - run: go mod tidy
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...
+      # Récupérable depuis l'onglet « Actions » pour commiter des dépendances figées.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: go-deps
+          path: |
+            go.mod
+            go.sum
