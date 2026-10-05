@@ -431,6 +431,42 @@ func conflict(cmd model.Command, all []model.Command) (string, bool) {
 	return "", false
 }
 
+// requestConflict renvoie un message si cmd empiète sur la commande de demande de musique.
+func requestConflict(cmd model.Command, ms model.MusicSettings) (string, bool) {
+	taken := map[string]bool{}
+	for _, n := range ms.RequestNames() {
+		if n != "" {
+			taken[n] = true
+		}
+	}
+	for _, n := range append([]string{cmd.Name}, cmd.Aliases...) {
+		if taken[n] {
+			return fmt.Sprintf("« %s » est utilisé par la commande de demande de musique (!%s)", n, ms.RequestCommand), true
+		}
+	}
+	return "", false
+}
+
+// requestShadows renvoie un message si la commande de demande masquerait une commande personnalisée.
+func requestShadows(ms model.MusicSettings, all []model.Command) (string, bool) {
+	owner := map[string]string{}
+	for _, c := range all {
+		owner[c.Name] = c.Name
+		for _, a := range c.Aliases {
+			owner[a] = c.Name
+		}
+	}
+	for _, n := range ms.RequestNames() {
+		if n == "" {
+			continue
+		}
+		if o, ok := owner[n]; ok {
+			return fmt.Sprintf("« %s » est déjà utilisé par la commande personnalisée !%s", n, o), true
+		}
+	}
+	return "", false
+}
+
 func (s *server) commandsChanged() {
 	if s.opts.OnCommandsChanged != nil {
 		s.opts.OnCommandsChanged()
@@ -468,6 +504,15 @@ func (s *server) createCommand(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, msg)
 		return
 	}
+	ms, err := s.store.GetMusicSettings(r.Context())
+	if err != nil {
+		serverErr(w, "création de la commande", err)
+		return
+	}
+	if msg, bad := requestConflict(cmd, ms); bad {
+		writeErr(w, http.StatusConflict, msg)
+		return
+	}
 	switch err := s.store.AddCommand(r.Context(), cmd); {
 	case errors.Is(err, model.ErrExists):
 		writeErr(w, http.StatusConflict, "cette commande existe déjà")
@@ -496,6 +541,15 @@ func (s *server) updateCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if msg, bad := conflict(cmd, all); bad {
+		writeErr(w, http.StatusConflict, msg)
+		return
+	}
+	ms, err := s.store.GetMusicSettings(r.Context())
+	if err != nil {
+		serverErr(w, "mise à jour de la commande", err)
+		return
+	}
+	if msg, bad := requestConflict(cmd, ms); bad {
 		writeErr(w, http.StatusConflict, msg)
 		return
 	}
@@ -589,8 +643,23 @@ func (s *server) putMusicSettings(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &ms) {
 		return
 	}
+	name, aliases, err := commands.NormalizeRequestCommand(ms.RequestCommand, ms.RequestAliases)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ms.RequestCommand, ms.RequestAliases = name, aliases
 	if err := ms.Normalize(); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	all, err := s.store.ListCommands(r.Context())
+	if err != nil {
+		serverErr(w, "enregistrement des réglages de la musique", err)
+		return
+	}
+	if msg, bad := requestShadows(ms, all); bad {
+		writeErr(w, http.StatusConflict, msg)
 		return
 	}
 	if err := s.store.SetMusicSettings(r.Context(), ms); err != nil {

@@ -109,7 +109,13 @@ type SongRequest struct {
 // MusicSettings regroupe les règles des demandes de musique, modifiables depuis l'administration.
 // Pour les limites numériques, 0 signifie « pas de limite ».
 type MusicSettings struct {
-	RequestLevel       Level    `json:"request_level"`        // qui peut utiliser !song
+	// RequestCommand est le nom (sans « ! ») de la commande de demande de musique, et
+	// RequestAliases ses alias. Modifiables depuis l'administration : « song » et « sr »
+	// ne sont que les valeurs par défaut.
+	RequestCommand string   `json:"request_command"`
+	RequestAliases []string `json:"request_aliases"`
+
+	RequestLevel       Level    `json:"request_level"`        // qui peut demander un titre
 	SkipLevel          Level    `json:"skip_level"`           // qui peut utiliser !skip
 	MaxPending         int      `json:"max_pending"`          // demandes du bot en attente dans la file
 	MaxPerUser         int      `json:"max_per_user"`         // demandes en attente par spectateur
@@ -128,6 +134,8 @@ const (
 // DefaultMusicSettings renvoie les réglages appliqués tant que rien n'a été enregistré.
 func DefaultMusicSettings() MusicSettings {
 	return MusicSettings{
+		RequestCommand:     "song",
+		RequestAliases:     []string{"sr"},
 		RequestLevel:       LevelEveryone,
 		SkipLevel:          LevelModerator,
 		MaxPending:         20,
@@ -166,5 +174,23 @@ func (s *MusicSettings) Normalize() error {
 		return fmt.Errorf("liste de blocage trop longue (%d termes max)", MaxBlocklistSize)
 	}
 	s.Blocklist = out
+	if s.RequestAliases == nil {
+		s.RequestAliases = []string{}
+	}
 	return nil
+}
+
+// RequestNames renvoie le nom de la commande de demande suivi de ses alias.
+func (s MusicSettings) RequestNames() []string {
+	return append([]string{s.RequestCommand}, s.RequestAliases...)
+}
+
+// IsRequestCommand indique si name (normalisé) déclenche une demande de musique.
+func (s MusicSettings) IsRequestCommand(name string) bool {
+	for _, n := range s.RequestNames() {
+		if n != "" && n == name {
+			return true
+		}
+	}
+	return false
 }

@@ -3,7 +3,7 @@
 Bot Twitch maison (dans l'esprit de Nightbot / StreamElements) pour tourner sur ton homelab :
 
 - **commandes personnalisées** (`!discord`, `!lurk`…) : variables, alias, rôle requis (abonnés, VIP, modérateurs…), délais global et par spectateur, compteur d'utilisations, activation/désactivation ;
-- **demandes de musique Spotify** : `!song <titre ou lien Spotify>` ajoute le titre à la **vraie file de lecture** de ton compte, avec des règles (plafonds, doublons, durée, contenu explicite, liste de blocage) ;
+- **demandes de musique Spotify** : `!song <titre ou lien Spotify>` ajoute le titre à la **vraie file de lecture** de ton compte, avec des règles (plafonds, doublons, durée, contenu explicite, liste de blocage). Le nom de la commande et ses alias sont renommables depuis l'administration ;
 - **site d'administration** (protégé par mot de passe) pour tout régler, voir la file Spotify en direct, et connecter les comptes Twitch du bot et Spotify.
 
 Un seul binaire Go, un seul processus, SQLite pour le stockage, interface web embarquée dans le binaire.
@@ -12,7 +12,7 @@ Un seul binaire Go, un seul processus, SQLite pour le stockage, interface web em
 
 | Commande | Qui | Effet |
 | --- | --- | --- |
-| `!song <titre>` / `!sr <titre>` | réglable (tout le monde par défaut) | Cherche le titre (ou lit le lien/URI Spotify) et l'ajoute à la file. Refusée si le titre joue déjà ou est déjà dans la file, ou si un plafond / une règle de l'administration l'interdit. Délai par spectateur (30 s par défaut). |
+| `!song <titre>` / `!sr <titre>` (renommables) | réglable (tout le monde par défaut) | Cherche le titre (ou lit le lien/URI Spotify) et l'ajoute à la file. Refusée si le titre joue déjà ou est déjà dans la file, ou si un plafond / une règle de l'administration l'interdit. Délai par spectateur (30 s par défaut). |
 | `!queue` | tous | Les prochaines demandes **encore dans la file Spotify** (repli sur l'historique si Spotify ne répond pas). |
 | `!np` / `!currentsong` | tous | Titre en cours de lecture. |
 | `!skip` | réglable (modérateurs par défaut) | Passe au titre suivant. |

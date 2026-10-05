@@ -32,6 +32,58 @@ var reserved = map[string]struct{}{
 	"addcmd": {}, "editcmd": {}, "delcmd": {},
 }
 
+// builtinsExceptRequest liste les intégrées que la commande de demande de musique ne
+// peut pas s'approprier. « song » et « sr » en sont volontairement absents : ce sont ses
+// valeurs par défaut, et les reprendre doit rester permis.
+var builtinsExceptRequest = map[string]struct{}{
+	"queue": {}, "help": {}, "skip": {}, "np": {}, "currentsong": {},
+	"addcmd": {}, "editcmd": {}, "delcmd": {},
+}
+
+// validateRequestName valide un nom destiné à la commande de demande de musique.
+func validateRequestName(name string) error {
+	if !nameRE.MatchString(name) {
+		return errors.New("nom invalide : 1 à 32 lettres, chiffres ou _")
+	}
+	if _, bad := builtinsExceptRequest[name]; bad {
+		return fmt.Errorf("!%s est une autre commande intégrée", name)
+	}
+	return nil
+}
+
+// NormalizeRequestCommand normalise et valide le nom et les alias de la commande de
+// demande de musique. Un nom vide retombe sur « song ». Les alias sont uniques et
+// distincts du nom.
+func NormalizeRequestCommand(name string, aliases []string) (string, []string, error) {
+	name = NormalizeName(name)
+	if name == "" {
+		name = "song"
+	}
+	if err := validateRequestName(name); err != nil {
+		return "", nil, err
+	}
+	seen := map[string]bool{name: true}
+	out := make([]string, 0, len(aliases))
+	for _, a := range aliases {
+		a = NormalizeName(a)
+		if a == "" {
+			continue
+		}
+		if err := validateRequestName(a); err != nil {
+			return "", nil, fmt.Errorf("alias %q : %w", a, err)
+		}
+		if seen[a] {
+			continue
+		}
+		seen[a] = true
+		out = append(out, a)
+	}
+	if len(out) > MaxAliases {
+		return "", nil, fmt.Errorf("trop d'alias (%d maximum)", MaxAliases)
+	}
+	return name, out, nil
+}
+
 // IsReserved indique si le nom est une commande intégrée.
 func IsReserved(name string) bool {
 	_, ok := reserved[name]

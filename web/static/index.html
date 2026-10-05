@@ -73,10 +73,18 @@
     <section class="panel">
       <h2>Musique</h2>
       <p class="hint">
-        Règles de <code>!song</code> et <code>!skip</code>. Les plafonds ne comptent que les demandes
+        Règles de <code id="m-cmd-hint">!song</code> et <code>!skip</code>. Les plafonds ne comptent que les demandes
         faites via le bot et encore dans la file Spotify. 0 = pas de limite.
       </p>
       <form id="music-form" autocomplete="off">
+        <div class="two">
+          <label>Commande de demande
+            <input id="m-request-command" placeholder="song" maxlength="32">
+          </label>
+          <label>Alias (séparés par des espaces)
+            <input id="m-request-aliases" placeholder="sr rs">
+          </label>
+        </div>
         <div class="two">
           <label>Qui peut demander un titre
             <select id="m-request-level" data-level></select>
@@ -114,7 +122,7 @@
 
     <section class="panel">
       <h2>Demandes de musique</h2>
-      <p class="hint">Historique des titres ajoutés à la file Spotify via <code>!song</code>.</p>
+      <p class="hint">Historique des titres ajoutés à la file Spotify via <code id="req-cmd-hint">!song</code>.</p>
       <div class="row">
         <button type="button" id="req-refresh" class="secondary">Actualiser</button>
         <button type="button" id="req-clear" class="danger">Vider l'historique</button>

@@ -84,6 +84,7 @@ puis ouvre <http://127.0.0.1:9090> (identifiant `ADMIN_USER`, mot de passe `ADMI
 2. Renseigne `SPOTIFY_ID` et `SPOTIFY_SECRET` dans `.env`, puis `docker compose up -d`.
 3. Dans l'administration, clique sur **Connecter** à côté de « Spotify » et accepte. Le jeton est conservé en base et renouvelé automatiquement : à ne faire qu'une fois.
 4. Ouvre Spotify sur un appareil (un lecteur actif est nécessaire pour ajouter à la file), puis teste `!song daft punk one more time` dans le chat.
+5. Pour renommer la commande, va dans l'administration → *Musique* → **Commande de demande** et ses **Alias** (par défaut `song` et `sr`). Le changement est immédiat, sans redémarrage. Les noms des autres commandes intégrées (`queue`, `np`, `help`, `skip`, `addcmd`, `editcmd`, `delcmd`) et ceux déjà pris par une commande personnalisée sont refusés.
 
 ## Exploitation
 

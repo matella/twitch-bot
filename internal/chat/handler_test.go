@@ -525,3 +525,29 @@ func TestParseTrackID(t *testing.T) {
 		}
 	}
 }
+
+func TestRenamedRequestCommand(t *testing.T) {
+	ctx := context.Background()
+	h, st, _ := newHandler(&fakeMusic{connected: true})
+	st.settings.RequestCommand = "requestspotify"
+	st.settings.RequestAliases = []string{"rs"}
+
+	// Le nouveau nom et son alias déclenchent la demande de musique.
+	for _, cmd := range []string{"!requestspotify", "!RS"} {
+		got := h.Handle(ctx, bob, cmd)
+		if !strings.HasPrefix(got, "Utilisation") {
+			t.Errorf("%s : réponse = %q", cmd, got)
+		}
+		if !strings.Contains(got, "!requestspotify") {
+			t.Errorf("%s : usage sans le nom configuré : %q", cmd, got)
+		}
+	}
+	// L'ancien nom ne déclenche plus rien et n'est pas une commande personnalisée.
+	if got := h.Handle(ctx, bob, "!song x"); got != "" {
+		t.Errorf("!song répond encore : %q", got)
+	}
+	// L'aide annonce le nom configuré.
+	if got := h.Handle(ctx, bob, "!help"); !strings.Contains(got, "!requestspotify") {
+		t.Errorf("aide = %q", got)
+	}
+}

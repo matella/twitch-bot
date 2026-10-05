@@ -134,3 +134,30 @@ func TestSanitizeOutgoing(t *testing.T) {
 		t.Error("troncature a produit de l'UTF-8 invalide")
 	}
 }
+
+func TestNormalizeRequestCommand(t *testing.T) {
+	// Nom vide : on retombe sur « song ». Les alias sont normalisés et dédoublonnés.
+	name, aliases, err := NormalizeRequestCommand("", []string{" !RS ", "rs", "requestspotify", ""})
+	if err != nil || name != "song" || len(aliases) != 2 || aliases[0] != "rs" || aliases[1] != "requestspotify" {
+		t.Fatalf("NormalizeRequestCommand = %q, %v, %v", name, aliases, err)
+	}
+	// song et sr restent permis : ce sont ses valeurs par défaut historiques.
+	for _, ok := range []string{"song", "sr", "requestspotify", "rs", "Demande"} {
+		if _, _, err := NormalizeRequestCommand(ok, nil); err != nil {
+			t.Errorf("NormalizeRequestCommand(%q) = %v, attendu nil", ok, err)
+		}
+	}
+	// Les autres intégrées et les noms mal formés sont refusés, en nom comme en alias.
+	for _, bad := range []string{"queue", "help", "skip", "np", "currentsong", "addcmd", "a b", "a-b"} {
+		if _, _, err := NormalizeRequestCommand(bad, nil); err == nil {
+			t.Errorf("NormalizeRequestCommand(%q) = nil, attendu une erreur", bad)
+		}
+		if _, _, err := NormalizeRequestCommand("rs", []string{bad}); err == nil {
+			t.Errorf("alias %q accepté", bad)
+		}
+	}
+	// Un alias identique au nom est écarté plutôt que dupliqué.
+	if _, got, _ := NormalizeRequestCommand("rs", []string{"RS"}); len(got) != 0 {
+		t.Errorf("alias identique au nom conservé : %v", got)
+	}
+}

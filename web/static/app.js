@@ -223,6 +223,11 @@ $("cmd-permission").addEventListener("change", updateArgsWarning);
 async function loadMusicSettings() {
   try {
     const m = await api("GET", "/api/music-settings");
+    $("m-request-command").value = m.request_command;
+    $("m-request-aliases").value = (m.request_aliases || []).join(" ");
+    const label = "!" + m.request_command;
+    $("m-cmd-hint").textContent = label;
+    $("req-cmd-hint").textContent = label;
     $("m-request-level").value = m.request_level;
     $("m-skip-level").value = m.skip_level;
     $("m-max-pending").value = m.max_pending;
@@ -239,6 +244,8 @@ $("music-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   try {
     await api("PUT", "/api/music-settings", {
+      request_command: $("m-request-command").value,
+      request_aliases: $("m-request-aliases").value.split(/[\s,]+/).filter(Boolean),
       request_level: $("m-request-level").value,
       skip_level: $("m-skip-level").value,
       max_pending: intOr("m-max-pending", 0),

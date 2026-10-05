@@ -129,8 +129,6 @@ func (h *Handler) Handle(ctx context.Context, u User, text string) string {
 	}
 	var reply string
 	switch name {
-	case "song", "sr":
-		reply = h.songRequest(ctx, u, args)
 	case "queue":
 		reply = h.limited("queue", func() string { return h.queue(ctx) })
 	case "np", "currentsong":
@@ -142,7 +140,14 @@ func (h *Handler) Handle(ctx context.Context, u User, text string) string {
 	case "addcmd", "editcmd", "delcmd":
 		reply = h.manage(ctx, u, name, args)
 	default:
-		reply = h.custom(ctx, u, name, args)
+		// Le nom de la commande de demande de musique est configurable depuis
+		// l'administration : il est donc résolu ici, avant de retomber sur les
+		// commandes personnalisées.
+		if ms := h.settings(ctx); ms.IsRequestCommand(name) {
+			reply = h.songRequest(ctx, u, args, ms)
+		} else {
+			reply = h.custom(ctx, u, name, args)
+		}
 	}
 	return commands.SanitizeOutgoing(reply)
 }
@@ -268,7 +273,7 @@ func (h *Handler) custom(ctx context.Context, u User, name, args string) string 
 }
 
 func (h *Handler) help(ctx context.Context, u User) string {
-	msg := "Commandes : !song <titre ou lien Spotify>, !queue, !np"
+	msg := "Commandes : !" + h.settings(ctx).RequestCommand + " <titre ou lien Spotify>, !queue, !np"
 	cmds, err := h.commandList(ctx)
 	if err != nil {
 		slog.Error("liste des commandes", "err", err)
@@ -488,16 +493,15 @@ func refusal(t *Track, ms model.MusicSettings) string {
 	return ""
 }
 
-func (h *Handler) songRequest(ctx context.Context, u User, query string) string {
+func (h *Handler) songRequest(ctx context.Context, u User, query string, ms model.MusicSettings) string {
 	if !h.musicReady() {
 		return "Les demandes de musique ne sont pas disponibles pour le moment."
 	}
-	ms := h.settings(ctx)
 	if u.Level < ms.RequestLevel {
 		return fmt.Sprintf("@%s les demandes sont réservées aux %s.", u.Name, ms.RequestLevel.Label())
 	}
 	if query == "" {
-		return "Utilisation : !song <titre ou lien Spotify>"
+		return "Utilisation : !" + ms.RequestCommand + " <titre ou lien Spotify>"
 	}
 	if utf8.RuneCountInString(query) > maxQueryRunes {
 		return fmt.Sprintf("Requête trop longue (%d caractères max).", maxQueryRunes)

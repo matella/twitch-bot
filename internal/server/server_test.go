@@ -612,3 +612,36 @@ func TestForwardedProtoOnlyTrustedBehindProxy(t *testing.T) {
 		}
 	}
 }
+
+func TestRequestCommandRename(t *testing.T) {
+	h, st := setup(t, nil)
+
+	// Une autre commande intégrée est refusée.
+	if w := do(h, "PUT", "/api/music-settings", `{"request_command":"queue","blocklist":[]}`); w.Code != http.StatusBadRequest {
+		t.Errorf("nom intégré accepté : %d %s", w.Code, w.Body.String())
+	}
+
+	// Renommage valide : normalisé et persisté.
+	put := `{"request_command":"RequestSpotify","request_aliases":["!RS","rs"],"blocklist":[]}`
+	if w := do(h, "PUT", "/api/music-settings", put); w.Code != http.StatusOK {
+		t.Fatalf("PUT = %d %s", w.Code, w.Body.String())
+	}
+	if st.music.RequestCommand != "requestspotify" || len(st.music.RequestAliases) != 1 || st.music.RequestAliases[0] != "rs" {
+		t.Fatalf("réglages enregistrés = %q %v", st.music.RequestCommand, st.music.RequestAliases)
+	}
+
+	// Une commande personnalisée ne peut pas s'approprier le nom configuré ni un alias.
+	for _, body := range []string{`{"name":"requestspotify","response":"x"}`, `{"name":"rs","response":"x"}`, `{"name":"ok","response":"x","aliases":["rs"]}`} {
+		if w := do(h, "POST", "/api/commands", body); w.Code != http.StatusConflict {
+			t.Errorf("collision acceptée pour %s : %d %s", body, w.Code, w.Body.String())
+		}
+	}
+
+	// Inversement, la commande de demande ne peut pas masquer une personnalisée existante.
+	if w := do(h, "POST", "/api/commands", `{"name":"soundcheck","response":"x"}`); w.Code != http.StatusCreated {
+		t.Fatalf("création = %d %s", w.Code, w.Body.String())
+	}
+	if w := do(h, "PUT", "/api/music-settings", `{"request_command":"soundcheck","blocklist":[]}`); w.Code != http.StatusConflict {
+		t.Errorf("la demande masque une commande personnalisée : %d %s", w.Code, w.Body.String())
+	}
+}
