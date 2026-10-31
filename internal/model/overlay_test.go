@@ -16,8 +16,10 @@ func TestOverlaySettingsNormalize(t *testing.T) {
 		func(o *OverlaySettings) { o.TextColor = "red" },
 		func(o *OverlaySettings) { o.TextColor = "#fff" },
 		func(o *OverlaySettings) { o.Position = "center" },
-		func(o *OverlaySettings) { o.Margin = -1 },
-		func(o *OverlaySettings) { o.Margin = 401 },
+		func(o *OverlaySettings) { o.MarginTop = -1 },
+		func(o *OverlaySettings) { o.MarginRight = 401 },
+		func(o *OverlaySettings) { o.MarginBottom = 401 },
+		func(o *OverlaySettings) { o.MarginLeft = -1 },
 		func(o *OverlaySettings) { o.Width = 99 },
 		func(o *OverlaySettings) { o.Width = 1921 },
 	} {

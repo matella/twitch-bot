@@ -16,7 +16,10 @@
     text_color: "#ffffff",
     show_badges: true,
     position: "bottom-left",
-    margin: 12,
+    margin_top: 12,
+    margin_right: 12,
+    margin_bottom: 12,
+    margin_left: 12,
     width: 600,
   };
 
@@ -39,7 +42,10 @@
     style.setProperty("--font-size", s.font_size + "px");
     style.setProperty("--font-family", FONTS[s.font_family] || FONTS.sans);
     style.setProperty("--text-color", s.text_color);
-    style.setProperty("--margin", s.margin + "px");
+    style.setProperty("--margin-top", s.margin_top + "px");
+    style.setProperty("--margin-right", s.margin_right + "px");
+    style.setProperty("--margin-bottom", s.margin_bottom + "px");
+    style.setProperty("--margin-left", s.margin_left + "px");
     style.setProperty("--width", s.width + "px");
     list.className = "pos-" + s.position;
 

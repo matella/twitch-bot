@@ -354,7 +354,10 @@ function renderOverlay(o) {
   const s = o.settings;
   $("o-url").textContent = location.origin + o.path + (o.token_required ? "?token=<OVERLAY_TOKEN>" : "");
   $("o-position").value = s.position;
-  $("o-margin").value = s.margin;
+  $("o-margin-top").value = s.margin_top;
+  $("o-margin-bottom").value = s.margin_bottom;
+  $("o-margin-left").value = s.margin_left;
+  $("o-margin-right").value = s.margin_right;
   $("o-width").value = s.width;
   $("o-max").value = s.max_messages;
   $("o-font-family").value = s.font_family;
@@ -376,7 +379,10 @@ $("overlay-form").addEventListener("submit", async (ev) => {
   try {
     renderOverlay(await api("PUT", "/api/overlay", {
       position: $("o-position").value,
-      margin: intOr("o-margin", 12),
+      margin_top: intOr("o-margin-top", 12),
+      margin_bottom: intOr("o-margin-bottom", 12),
+      margin_left: intOr("o-margin-left", 12),
+      margin_right: intOr("o-margin-right", 12),
       width: intOr("o-width", 600),
       max_messages: intOr("o-max", 40),
       font_family: $("o-font-family").value,

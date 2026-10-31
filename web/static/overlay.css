@@ -6,7 +6,10 @@
   --font-family: "Segoe UI", system-ui, sans-serif;
   --text-color: #ffffff;
   --shadow: #000000;
-  --margin: 12px;
+  --margin-top: 12px;
+  --margin-right: 12px;
+  --margin-bottom: 12px;
+  --margin-left: 12px;
   --width: 600px;
 }
 
@@ -31,7 +34,7 @@ body {
   flex-direction: column;
   gap: 6px;
   width: var(--width);
-  max-height: calc(100vh - 2 * var(--margin));
+  max-height: calc(100vh - var(--margin-top) - var(--margin-bottom));
   overflow: hidden;
   margin: 0;
   padding: 0;
@@ -41,27 +44,27 @@ body {
 
 /* Le coin choisi détermine le sens de remplissage : les nouveaux messages arrivent au bord de l'ancrage. */
 .pos-top-left {
-  top: var(--margin);
-  left: var(--margin);
+  top: var(--margin-top);
+  left: var(--margin-left);
   justify-content: flex-start;
 }
 
 .pos-top-right {
-  top: var(--margin);
-  right: var(--margin);
+  top: var(--margin-top);
+  right: var(--margin-right);
   justify-content: flex-start;
   text-align: right;
 }
 
 .pos-bottom-left {
-  bottom: var(--margin);
-  left: var(--margin);
+  bottom: var(--margin-bottom);
+  left: var(--margin-left);
   justify-content: flex-end;
 }
 
 .pos-bottom-right {
-  bottom: var(--margin);
-  right: var(--margin);
+  bottom: var(--margin-bottom);
+  right: var(--margin-right);
   justify-content: flex-end;
   text-align: right;
 }
