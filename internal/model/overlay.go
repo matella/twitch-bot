@@ -63,8 +63,8 @@ func (o *OverlaySettings) Normalize() error {
 		return errors.New("position invalide")
 	}
 	for _, m := range []int{o.MarginTop, o.MarginRight, o.MarginBottom, o.MarginLeft} {
-		if m < 0 || m > 400 {
-			return errors.New("marge invalide (0 à 400)")
+		if m < 0 {
+			return errors.New("marge invalide (négative)")
 		}
 	}
 	if o.Width < 100 || o.Width > 1920 {
