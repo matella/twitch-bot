@@ -12,6 +12,8 @@ import (
 	"testing"
 	"testing/fstest"
 	"time"
+
+	"github.com/matella/twitch-bot/internal/model"
 )
 
 const testToken = "jeton-secret-de-test"
@@ -141,6 +143,48 @@ func TestNilCatalogIsEmpty(t *testing.T) {
 	}
 }
 
+// fakeSettings renvoie des réglages fixes pour les tests.
+type fakeSettings struct{}
+
+func (fakeSettings) GetOverlaySettings(context.Context) (model.OverlaySettings, error) {
+	return model.OverlaySettings{MaxMessages: 7, FontSize: 30, ShowBadges: false}, nil
+}
+
+func TestOpenModeWithoutToken(t *testing.T) {
+	srv := httptest.NewServer(NewHandler("", testAssets(), NewHub(), nil, fakeSettings{}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/overlay/settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("sans jeton configuré : statut %d, attendu 200", resp.StatusCode)
+	}
+	var got model.OverlaySettings
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.MaxMessages != 7 || got.FontSize != 30 || got.ShowBadges {
+		t.Errorf("réglages = %+v", got)
+	}
+}
+
+func TestSettingsRequireToken(t *testing.T) {
+	srv := httptest.NewServer(NewHandler(testToken, testAssets(), NewHub(), nil, fakeSettings{}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/overlay/settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("réglages sans jeton : statut %d, attendu 401", resp.StatusCode)
+	}
+}
+
 func testAssets() fstest.MapFS {
 	return fstest.MapFS{
 		"overlay.html": {Data: []byte("<!doctype html><title>chat</title>")},
@@ -150,7 +194,7 @@ func testAssets() fstest.MapFS {
 }
 
 func TestHandlerRequiresToken(t *testing.T) {
-	srv := httptest.NewServer(NewHandler(testToken, testAssets(), NewHub(), nil))
+	srv := httptest.NewServer(NewHandler(testToken, testAssets(), NewHub(), nil, fakeSettings{}))
 	defer srv.Close()
 
 	for _, path := range []string{"/overlay/chat", "/overlay/badges", "/overlay/events", "/overlay/chat?token=mauvais"} {
@@ -189,7 +233,7 @@ func TestHandlerRequiresToken(t *testing.T) {
 }
 
 func TestAssetsAllowlist(t *testing.T) {
-	srv := httptest.NewServer(NewHandler(testToken, testAssets(), NewHub(), nil))
+	srv := httptest.NewServer(NewHandler(testToken, testAssets(), NewHub(), nil, fakeSettings{}))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/overlay/assets/overlay.css")
@@ -214,7 +258,7 @@ func TestAssetsAllowlist(t *testing.T) {
 
 func TestEventsStreamsMessages(t *testing.T) {
 	hub := NewHub()
-	srv := httptest.NewServer(NewHandler(testToken, testAssets(), hub, nil))
+	srv := httptest.NewServer(NewHandler(testToken, testAssets(), hub, nil, fakeSettings{}))
 	defer srv.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

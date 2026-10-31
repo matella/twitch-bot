@@ -1,6 +1,7 @@
 package overlay
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
@@ -8,6 +9,8 @@ import (
 	"io/fs"
 	"net/http"
 	"time"
+
+	"github.com/matella/twitch-bot/internal/model"
 )
 
 // csp : la page n'embarque que ses propres scripts et les images de badges de Twitch.
@@ -24,25 +27,36 @@ var assetTypes = map[string]string{
 // Les données exigent le jeton secret (?token=…), car une source navigateur d'OBS ne peut pas
 // envoyer d'identifiants HTTP Basic.
 type Handler struct {
+	required  bool // faux si OVERLAY_TOKEN est vide : l'incrustation est alors ouverte
 	tokenHash [sha256.Size]byte
 	hub       *Hub
 	catalog   *Catalog
+	settings  Settings
 	assets    fs.FS
 	mux       *http.ServeMux
 }
 
+// Settings fournit les réglages d'affichage de l'incrustation.
+type Settings interface {
+	GetOverlaySettings(ctx context.Context) (model.OverlaySettings, error)
+}
+
 // NewHandler construit l'incrustation. assets contient overlay.html, overlay.js et overlay.css.
-func NewHandler(token string, assets fs.FS, hub *Hub, catalog *Catalog) *Handler {
+// Un jeton vide laisse la page accessible sans jeton.
+func NewHandler(token string, assets fs.FS, hub *Hub, catalog *Catalog, settings Settings) *Handler {
 	h := &Handler{
+		required:  token != "",
 		tokenHash: sha256.Sum256([]byte(token)),
 		hub:       hub,
 		catalog:   catalog,
+		settings:  settings,
 		assets:    assets,
 		mux:       http.NewServeMux(),
 	}
 	h.mux.HandleFunc("GET /overlay/chat", h.guard(h.page))
 	h.mux.HandleFunc("GET /overlay/events", h.guard(h.events))
 	h.mux.HandleFunc("GET /overlay/badges", h.guard(h.badges))
+	h.mux.HandleFunc("GET /overlay/settings", h.guard(h.settingsJSON))
 	h.mux.HandleFunc("GET /overlay/assets/{file}", h.asset)
 	return h
 }
@@ -58,9 +72,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mux.ServeHTTP(w, r)
 }
 
-// guard refuse toute requête sans le bon jeton.
+// guard refuse toute requête sans le bon jeton, sauf si l'incrustation est ouverte.
 func (h *Handler) guard(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !h.required {
+			next(w, r)
+			return
+		}
 		sum := sha256.Sum256([]byte(r.URL.Query().Get("token")))
 		if subtle.ConstantTimeCompare(sum[:], h.tokenHash[:]) != 1 {
 			http.Error(w, "jeton manquant ou invalide", http.StatusUnauthorized)
@@ -97,6 +115,16 @@ func (h *Handler) serveFile(w http.ResponseWriter, name, ctype string) {
 func (h *Handler) badges(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(h.catalog.All())
+}
+
+func (h *Handler) settingsJSON(w http.ResponseWriter, r *http.Request) {
+	s, err := h.settings.GetOverlaySettings(r.Context())
+	if err != nil {
+		http.Error(w, "réglages indisponibles", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(s)
 }
 
 // events diffuse les messages au format Server-Sent Events, jusqu'à la fermeture de la connexion.

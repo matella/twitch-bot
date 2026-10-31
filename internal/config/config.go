@@ -27,7 +27,7 @@ type Config struct {
 	SpotifySecret      string
 	SpotifyRedirectURL string
 
-	// Incrustation du chat à l'écran (source navigateur d'OBS) : désactivée si le jeton est vide.
+	// Incrustation du chat à l'écran (source navigateur d'OBS). Jeton facultatif : vide = page ouverte.
 	OverlayToken string
 
 	Port          string
@@ -43,9 +43,6 @@ type Config struct {
 func (c Config) TwitchOAuthEnabled() bool {
 	return c.TwitchClientID != "" && c.TwitchClientSecret != ""
 }
-
-// OverlayEnabled indique si l'incrustation du chat est activée.
-func (c Config) OverlayEnabled() bool { return c.OverlayToken != "" }
 
 // SpotifyEnabled indique si les identifiants Spotify sont fournis.
 func (c Config) SpotifyEnabled() bool { return c.SpotifyID != "" && c.SpotifySecret != "" }

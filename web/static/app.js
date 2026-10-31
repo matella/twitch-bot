@@ -348,6 +348,37 @@ $("req-clear").addEventListener("click", async () => {
   loadRequests();
 });
 
+// ---- incrustation du chat ----
+
+function renderOverlay(o) {
+  $("o-url").textContent = location.origin + o.path + (o.token_required ? "?token=<OVERLAY_TOKEN>" : "");
+  $("o-max").value = o.settings.max_messages;
+  $("o-font").value = o.settings.font_size;
+  $("o-badges").checked = o.settings.show_badges;
+}
+
+async function loadOverlay() {
+  try {
+    renderOverlay(await api("GET", "/api/overlay"));
+  } catch (e) {
+    toast(e.message, "bad");
+  }
+}
+
+$("overlay-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  try {
+    renderOverlay(await api("PUT", "/api/overlay", {
+      max_messages: intOr("o-max", 40),
+      font_size: intOr("o-font", 22),
+      show_badges: $("o-badges").checked,
+    }));
+    toast("Réglages de l'incrustation enregistrés", "ok");
+  } catch (e) {
+    toast(e.message, "bad");
+  }
+});
+
 // ---- démarrage ----
 
 (function showOAuthResult() {
@@ -371,6 +402,7 @@ $("req-clear").addEventListener("click", async () => {
 refreshStatus();
 loadCommands();
 loadMusicSettings();
+loadOverlay();
 loadQueue();
 loadRequests();
 setInterval(refreshStatus, 5000);

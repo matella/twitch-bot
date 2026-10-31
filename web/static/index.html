@@ -129,6 +129,27 @@
       </div>
       <ul class="list" id="requests"></ul>
     </section>
+
+    <section class="panel">
+      <h2>Incrustation du chat (OBS)</h2>
+      <p class="hint">
+        Source navigateur d'OBS, fond transparent : <code id="o-url">…</code><br>
+        Si <code>OVERLAY_TOKEN</code> est défini sur le serveur, ajoute <code>?token=…</code> avec cette valeur.
+        Les réglages s'appliquent quand la source OBS est rechargée.
+      </p>
+      <form id="overlay-form" autocomplete="off">
+        <div class="two">
+          <label>Messages à l'écran
+            <input id="o-max" type="number" min="1" max="100">
+          </label>
+          <label>Taille de police (px)
+            <input id="o-font" type="number" min="12" max="72">
+          </label>
+        </div>
+        <label class="check"><input id="o-badges" type="checkbox"> Afficher les badges</label>
+        <div class="row"><button type="submit">Enregistrer</button></div>
+      </form>
+    </section>
   </main>
 
   <script src="/app.js"></script>

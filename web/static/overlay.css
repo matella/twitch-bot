@@ -15,7 +15,7 @@ body {
 
 body {
   font-family: "Segoe UI", system-ui, sans-serif;
-  font-size: 22px;
+  font-size: var(--font-size, 22px);
   color: var(--text);
   text-shadow: 0 0 4px var(--shadow), 0 0 2px var(--shadow);
 }
@@ -43,6 +43,18 @@ body {
   height: 1.1em;
   margin-right: 4px;
   vertical-align: -0.2em;
+}
+
+.badge-text {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 0 0.35em;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.2);
+  font-size: 0.6em;
+  font-weight: 700;
+  text-transform: uppercase;
+  vertical-align: 0.15em;
 }
 
 .name {

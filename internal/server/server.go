@@ -82,6 +82,10 @@ type Options struct {
 	OnCommandsChanged func()
 	// Overlay sert l'incrustation du chat, protégée par son propre jeton. Peut être nil.
 	Overlay http.Handler
+	// OverlayStore enregistre les réglages de l'incrustation. Peut être nil.
+	OverlayStore OverlayStore
+	// OverlayTokenRequired indique si l'incrustation exige OVERLAY_TOKEN (affiché dans l'administration).
+	OverlayTokenRequired bool
 	Now     func() time.Time // injectable pour les tests
 }
 
@@ -90,6 +94,7 @@ type server struct {
 	spotify Spotify
 	twitch  Twitch
 	bot     Bot
+	overlay OverlayStore
 	opts    Options
 	fails   *failLimiter
 
@@ -102,7 +107,7 @@ func New(o Options, st Store, sp Spotify, tw Twitch, bot Bot) http.Handler {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	s := &server{store: st, spotify: sp, twitch: tw, bot: bot, opts: o, fails: newFailLimiter(o.Now)}
+	s := &server{store: st, spotify: sp, twitch: tw, bot: bot, opts: o, fails: newFailLimiter(o.Now), overlay: o.OverlayStore}
 	s.userHash = sha256.Sum256([]byte(o.AdminUser))
 	s.passHash = sha256.Sum256([]byte(o.AdminPassword))
 
@@ -119,6 +124,8 @@ func New(o Options, st Store, sp Spotify, tw Twitch, bot Bot) http.Handler {
 	api.HandleFunc("PUT /api/music-settings", s.putMusicSettings)
 	api.HandleFunc("GET /api/spotify/queue", s.spotifyQueue)
 	api.HandleFunc("POST /api/spotify/skip", s.spotifySkip)
+	api.HandleFunc("GET /api/overlay", s.getOverlay)
+	api.HandleFunc("PUT /api/overlay", s.putOverlay)
 
 	spotifyFlow := s.oauthFlow("spotify", "Spotify n'est pas configuré (SPOTIFY_ID / SPOTIFY_SECRET)", nil)
 	twitchFlow := s.oauthFlow("twitch", "La connexion Twitch n'est pas configurée (TWITCH_CLIENT_ID / TWITCH_CLIENT_SECRET)",

@@ -87,35 +87,34 @@ func run() error {
 		creds, twitchAdmin = tw, tw
 		slog.Info("connexion Twitch OAuth configurée", "redirect_url", cfg.TwitchRedirectURL, "connected", tw.Connected())
 	}
-	// Incrustation du chat : désactivée (interfaces nil) si OVERLAY_TOKEN n'est pas défini.
-	var chatFeed bot.ChatFeed
-	var overlayHandler http.Handler
-	if cfg.OverlayEnabled() {
-		hub := overlay.NewHub()
-		// Les badges viennent de l'API Twitch : sans identifiants d'application, le chat s'affiche sans badges.
-		var catalog *overlay.Catalog
-		if cfg.TwitchOAuthEnabled() {
-			catalog = overlay.NewCatalog(cfg.TwitchClientID, cfg.TwitchClientSecret, cfg.Channel)
-			go catalog.Run(ctx)
-		} else {
-			slog.Warn("badges désactivés : TWITCH_CLIENT_ID et TWITCH_CLIENT_SECRET requis")
-		}
-		chatFeed = hub
-		overlayHandler = overlay.NewHandler(cfg.OverlayToken, web.Static(), hub, catalog)
-		slog.Info("incrustation du chat activée", "path", "/overlay/chat")
+	// Incrustation du chat (toujours active). Sans OVERLAY_TOKEN, la page est ouverte à quiconque peut joindre le serveur.
+	hub := overlay.NewHub()
+	// Les badges viennent de l'API Twitch : sans identifiants d'application, le chat s'affiche sans badges.
+	var catalog *overlay.Catalog
+	if cfg.TwitchOAuthEnabled() {
+		catalog = overlay.NewCatalog(cfg.TwitchClientID, cfg.TwitchClientSecret, cfg.Channel)
+		go catalog.Run(ctx)
+	} else {
+		slog.Warn("badges désactivés : TWITCH_CLIENT_ID et TWITCH_CLIENT_SECRET requis")
 	}
-	twitchBot := bot.New(cfg.Channel, creds, handler).WithFeed(chatFeed)
+	if cfg.OverlayToken == "" {
+		slog.Warn("incrustation du chat sans OVERLAY_TOKEN : /overlay/chat est accessible sans jeton")
+	}
+	overlayHandler := overlay.NewHandler(cfg.OverlayToken, web.Static(), hub, catalog, db)
+	twitchBot := bot.New(cfg.Channel, creds, handler).WithFeed(hub)
 
 	srv := &http.Server{
 		Addr: ":" + cfg.Port,
 		Handler: server.New(server.Options{
-			Channel:           cfg.Channel,
-			AdminUser:         cfg.AdminUser,
-			AdminPassword:     cfg.AdminPassword,
-			Assets:            web.Static(),
-			TrustProxy:        cfg.TrustProxy,
-			OnCommandsChanged: handler.InvalidateCommands,
-			Overlay:           overlayHandler,
+			Channel:              cfg.Channel,
+			AdminUser:            cfg.AdminUser,
+			AdminPassword:        cfg.AdminPassword,
+			Assets:               web.Static(),
+			TrustProxy:           cfg.TrustProxy,
+			OnCommandsChanged:    handler.InvalidateCommands,
+			Overlay:              overlayHandler,
+			OverlayStore:         db,
+			OverlayTokenRequired: cfg.OverlayToken != "",
 		}, db, spotifyAdmin, twitchAdmin, twitchBot),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
