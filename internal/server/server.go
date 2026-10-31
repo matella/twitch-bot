@@ -80,7 +80,9 @@ type Options struct {
 	TrustProxy bool
 	// OnCommandsChanged est appelée après chaque modification des commandes (pour vider le cache du bot).
 	OnCommandsChanged func()
-	Now               func() time.Time // injectable pour les tests
+	// Overlay sert l'incrustation du chat, protégée par son propre jeton. Peut être nil.
+	Overlay http.Handler
+	Now     func() time.Time // injectable pour les tests
 }
 
 type server struct {
@@ -143,6 +145,11 @@ func New(o Options, st Store, sp Spotify, tw Twitch, bot Bot) http.Handler {
 	root.HandleFunc("GET /api/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	// L'incrustation n'utilise ni l'authentification Basic ni la CSP de l'administration :
+	// elle se protège par son jeton et gère ses propres en-têtes.
+	if o.Overlay != nil {
+		root.Handle("/overlay/", o.Overlay)
+	}
 	root.Handle("/", s.headers(s.auth(s.csrf(api))))
 	return root
 }

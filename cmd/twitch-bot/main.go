@@ -18,6 +18,7 @@ import (
 	"github.com/matella/twitch-bot/internal/bot"
 	"github.com/matella/twitch-bot/internal/chat"
 	"github.com/matella/twitch-bot/internal/config"
+	"github.com/matella/twitch-bot/internal/overlay"
 	"github.com/matella/twitch-bot/internal/server"
 	"github.com/matella/twitch-bot/internal/spotify"
 	"github.com/matella/twitch-bot/internal/store"
@@ -86,7 +87,24 @@ func run() error {
 		creds, twitchAdmin = tw, tw
 		slog.Info("connexion Twitch OAuth configurée", "redirect_url", cfg.TwitchRedirectURL, "connected", tw.Connected())
 	}
-	twitchBot := bot.New(cfg.Channel, creds, handler)
+	// Incrustation du chat : désactivée (interfaces nil) si OVERLAY_TOKEN n'est pas défini.
+	var chatFeed bot.ChatFeed
+	var overlayHandler http.Handler
+	if cfg.OverlayEnabled() {
+		hub := overlay.NewHub()
+		// Les badges viennent de l'API Twitch : sans identifiants d'application, le chat s'affiche sans badges.
+		var catalog *overlay.Catalog
+		if cfg.TwitchOAuthEnabled() {
+			catalog = overlay.NewCatalog(cfg.TwitchClientID, cfg.TwitchClientSecret, cfg.Channel)
+			go catalog.Run(ctx)
+		} else {
+			slog.Warn("badges désactivés : TWITCH_CLIENT_ID et TWITCH_CLIENT_SECRET requis")
+		}
+		chatFeed = hub
+		overlayHandler = overlay.NewHandler(cfg.OverlayToken, web.Static(), hub, catalog)
+		slog.Info("incrustation du chat activée", "path", "/overlay/chat")
+	}
+	twitchBot := bot.New(cfg.Channel, creds, handler).WithFeed(chatFeed)
 
 	srv := &http.Server{
 		Addr: ":" + cfg.Port,
@@ -97,6 +115,7 @@ func run() error {
 			Assets:            web.Static(),
 			TrustProxy:        cfg.TrustProxy,
 			OnCommandsChanged: handler.InvalidateCommands,
+			Overlay:           overlayHandler,
 		}, db, spotifyAdmin, twitchAdmin, twitchBot),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,

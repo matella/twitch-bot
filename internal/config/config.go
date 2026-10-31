@@ -27,6 +27,9 @@ type Config struct {
 	SpotifySecret      string
 	SpotifyRedirectURL string
 
+	// Incrustation du chat à l'écran (source navigateur d'OBS) : désactivée si le jeton est vide.
+	OverlayToken string
+
 	Port          string
 	DBPath        string
 	AdminUser     string
@@ -41,11 +44,17 @@ func (c Config) TwitchOAuthEnabled() bool {
 	return c.TwitchClientID != "" && c.TwitchClientSecret != ""
 }
 
+// OverlayEnabled indique si l'incrustation du chat est activée.
+func (c Config) OverlayEnabled() bool { return c.OverlayToken != "" }
+
 // SpotifyEnabled indique si les identifiants Spotify sont fournis.
 func (c Config) SpotifyEnabled() bool { return c.SpotifyID != "" && c.SpotifySecret != "" }
 
 // MinPasswordLen est la longueur minimale du mot de passe admin.
 const MinPasswordLen = 8
+
+// MinOverlayTokenLen est la longueur minimale du jeton de l'incrustation.
+const MinOverlayTokenLen = 16
 
 // Load lit la configuration via getenv (os.Getenv en production).
 func Load(getenv func(string) string) (Config, error) {
@@ -66,6 +75,7 @@ func Load(getenv func(string) string) (Config, error) {
 		TwitchClientSecret: get("TWITCH_CLIENT_SECRET"),
 		SpotifyID:          get("SPOTIFY_ID"),
 		SpotifySecret:      get("SPOTIFY_SECRET"),
+		OverlayToken:       get("OVERLAY_TOKEN"),
 		Port:               def("PORT", "9090"),
 		DBPath:             def("DB_PATH", "bot.db"),
 		AdminUser:          def("ADMIN_USER", "admin"),
@@ -112,6 +122,9 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if (c.SpotifyID == "") != (c.SpotifySecret == "") {
 		return Config{}, errors.New("SPOTIFY_ID et SPOTIFY_SECRET doivent être définis ensemble")
+	}
+	if c.OverlayToken != "" && len(c.OverlayToken) < MinOverlayTokenLen {
+		return Config{}, fmt.Errorf("OVERLAY_TOKEN trop court (%d caractères minimum)", MinOverlayTokenLen)
 	}
 
 	// Twitch accepte « localhost » (mais pas 127.0.0.1) en HTTP pour l'URL de redirection.

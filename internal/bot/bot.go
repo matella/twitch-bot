@@ -17,6 +17,7 @@ import (
 
 	"github.com/matella/twitch-bot/internal/chat"
 	"github.com/matella/twitch-bot/internal/model"
+	"github.com/matella/twitch-bot/internal/overlay"
 )
 
 const (
@@ -46,12 +47,18 @@ func (s StaticCredentials) Credentials(context.Context) (string, string, error) 
 	return s.User, s.Pass, nil
 }
 
+// ChatFeed reçoit tout le chat, y compris les messages sans commande (incrustation à l'écran).
+type ChatFeed interface {
+	Publish(overlay.Message)
+}
+
 // Bot est le client Twitch.
 type Bot struct {
 	channel string
 	creds   Credentials
 	handler *chat.Handler
 	limiter *window
+	feed    ChatFeed // nil si l'incrustation est désactivée
 
 	sem chan struct{}
 
@@ -70,6 +77,12 @@ func New(channel string, creds Credentials, handler *chat.Handler) *Bot {
 		limiter: newWindow(sendBurst, sendWindow),
 		sem:     make(chan struct{}, maxInFlight),
 	}
+}
+
+// WithFeed diffuse tout le chat vers f. À appeler avant Run.
+func (b *Bot) WithFeed(f ChatFeed) *Bot {
+	b.feed = f
+	return b
 }
 
 // Connected indique si la connexion à Twitch est active.
@@ -232,6 +245,19 @@ func levelOf(login, channel string, badges map[string]int) model.Level {
 }
 
 func (b *Bot) onMessage(client *twitch.Client, self string, m twitch.PrivateMessage) {
+	if b.feed != nil {
+		name := m.User.DisplayName
+		if name == "" {
+			name = m.User.Name
+		}
+		b.feed.Publish(overlay.Message{
+			Login:  strings.ToLower(m.User.Name),
+			Name:   name,
+			Color:  overlay.SafeColor(m.User.Color),
+			Badges: overlay.BadgeKeys(m.User.Badges),
+			Text:   m.Message,
+		})
+	}
 	login := strings.ToLower(m.User.Name)
 	if login == self || !strings.HasPrefix(m.Message, "!") {
 		return

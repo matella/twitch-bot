@@ -1,0 +1,63 @@
+/* Incrustation du chat : fond transparent pour une source navigateur d'OBS. */
+:root {
+  color-scheme: dark;
+  --text: #ffffff;
+  --shadow: #000000;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+body {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 22px;
+  color: var(--text);
+  text-shadow: 0 0 4px var(--shadow), 0 0 2px var(--shadow);
+}
+
+#chat {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 6px;
+  height: 100%;
+  margin: 0;
+  padding: 12px;
+  box-sizing: border-box;
+  list-style: none;
+}
+
+.msg {
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  animation: apparition 0.2s ease-out;
+}
+
+.badge {
+  width: 1.1em;
+  height: 1.1em;
+  margin-right: 4px;
+  vertical-align: -0.2em;
+}
+
+.name {
+  font-weight: 700;
+}
+
+@keyframes apparition {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg {
+    animation: none;
+  }
+}
