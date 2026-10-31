@@ -6,7 +6,7 @@ import (
 )
 
 // Positions possibles de l'incrustation dans la source OBS.
-var OverlayPositions = []string{"top-left", "top-right", "bottom-left", "bottom-right"}
+var OverlayPositions = []string{"top-left", "top-right", "bottom-left", "bottom-right", "middle-left"}
 
 // Familles de police possibles (les piles CSS sont choisies dans la page).
 var OverlayFonts = []string{"sans", "serif", "mono"}
@@ -20,7 +20,7 @@ type OverlaySettings struct {
 	FontFamily   string `json:"font_family"`  // sans | serif | mono
 	TextColor    string `json:"text_color"`   // couleur du texte « #rrggbb »
 	ShowBadges   bool   `json:"show_badges"`  // afficher les badges à côté du pseudo
-	Position     string `json:"position"`     // coin de la source : top-left, top-right, bottom-left, bottom-right
+	Position     string `json:"position"`     // coin de la source : top-left, top-right, bottom-left, bottom-right, ou middle-left (milieu gauche)
 	MarginTop    int    `json:"margin_top"`   // marges par rapport aux bords de la source, en pixels
 	MarginRight  int    `json:"margin_right"`
 	MarginBottom int    `json:"margin_bottom"`

@@ -2,6 +2,14 @@ package model
 
 import "testing"
 
+func TestOverlayPositionMiddleLeftIsAccepted(t *testing.T) {
+	o := DefaultOverlaySettings()
+	o.Position = "middle-left"
+	if err := o.Normalize(); err != nil {
+		t.Fatalf("middle-left refusé : %v", err)
+	}
+}
+
 func TestOverlaySettingsNormalize(t *testing.T) {
 	ok := DefaultOverlaySettings()
 	if err := ok.Normalize(); err != nil {

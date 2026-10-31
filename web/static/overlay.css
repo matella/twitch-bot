@@ -56,6 +56,15 @@ body {
   text-align: right;
 }
 
+/* Milieu gauche : la liste est centrée verticalement sur le bord gauche de la source. */
+.pos-middle-left {
+  top: 50%;
+  left: var(--margin-left);
+  transform: translateY(-50%);
+  max-height: calc(100vh - var(--margin-top) - var(--margin-bottom));
+  justify-content: center;
+}
+
 .pos-bottom-left {
   bottom: var(--margin-bottom);
   left: var(--margin-left);
