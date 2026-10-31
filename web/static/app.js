@@ -351,10 +351,16 @@ $("req-clear").addEventListener("click", async () => {
 // ---- incrustation du chat ----
 
 function renderOverlay(o) {
+  const s = o.settings;
   $("o-url").textContent = location.origin + o.path + (o.token_required ? "?token=<OVERLAY_TOKEN>" : "");
-  $("o-max").value = o.settings.max_messages;
-  $("o-font").value = o.settings.font_size;
-  $("o-badges").checked = o.settings.show_badges;
+  $("o-position").value = s.position;
+  $("o-margin").value = s.margin;
+  $("o-width").value = s.width;
+  $("o-max").value = s.max_messages;
+  $("o-font-family").value = s.font_family;
+  $("o-font").value = s.font_size;
+  $("o-color").value = s.text_color;
+  $("o-badges").checked = s.show_badges;
 }
 
 async function loadOverlay() {
@@ -369,8 +375,13 @@ $("overlay-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   try {
     renderOverlay(await api("PUT", "/api/overlay", {
+      position: $("o-position").value,
+      margin: intOr("o-margin", 12),
+      width: intOr("o-width", 600),
       max_messages: intOr("o-max", 40),
+      font_family: $("o-font-family").value,
       font_size: intOr("o-font", 22),
+      text_color: $("o-color").value,
       show_badges: $("o-badges").checked,
     }));
     toast("Réglages de l'incrustation enregistrés", "ok");

@@ -19,7 +19,8 @@ func (s *Store) GetOverlaySettings(ctx context.Context) (model.OverlaySettings, 
 	if err != nil {
 		return model.OverlaySettings{}, err
 	}
-	var o model.OverlaySettings
+	// Partir des valeurs par défaut : un champ absent (ajouté après l'enregistrement) garde sa valeur par défaut.
+	o := model.DefaultOverlaySettings()
 	if err := json.Unmarshal([]byte(raw), &o); err != nil {
 		return model.DefaultOverlaySettings(), nil
 	}

@@ -135,17 +135,45 @@
       <p class="hint">
         Source navigateur d'OBS, fond transparent : <code id="o-url">…</code><br>
         Si <code>OVERLAY_TOKEN</code> est défini sur le serveur, ajoute <code>?token=…</code> avec cette valeur.
-        Les réglages s'appliquent quand la source OBS est rechargée.
+        Les réglages s'appliquent en direct, sans recharger la source OBS.
       </p>
       <form id="overlay-form" autocomplete="off">
         <div class="two">
+          <label>Position dans la source
+            <select id="o-position">
+              <option value="bottom-left">Bas gauche</option>
+              <option value="bottom-right">Bas droite</option>
+              <option value="top-left">Haut gauche</option>
+              <option value="top-right">Haut droite</option>
+            </select>
+          </label>
+          <label>Marge (px)
+            <input id="o-margin" type="number" min="0" max="400">
+          </label>
+        </div>
+        <div class="two">
+          <label>Largeur du chat (px)
+            <input id="o-width" type="number" min="100" max="1920">
+          </label>
           <label>Messages à l'écran
             <input id="o-max" type="number" min="1" max="100">
+          </label>
+        </div>
+        <div class="two">
+          <label>Police
+            <select id="o-font-family">
+              <option value="sans">Sans-serif</option>
+              <option value="serif">Serif</option>
+              <option value="mono">Monospace</option>
+            </select>
           </label>
           <label>Taille de police (px)
             <input id="o-font" type="number" min="12" max="72">
           </label>
         </div>
+        <label>Couleur du texte
+          <input id="o-color" type="color">
+        </label>
         <label class="check"><input id="o-badges" type="checkbox"> Afficher les badges</label>
         <div class="row"><button type="submit">Enregistrer</button></div>
       </form>

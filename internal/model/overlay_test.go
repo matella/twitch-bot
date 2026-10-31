@@ -7,14 +7,24 @@ func TestOverlaySettingsNormalize(t *testing.T) {
 	if err := ok.Normalize(); err != nil {
 		t.Fatalf("valeurs par défaut refusées : %v", err)
 	}
-	for _, tt := range []OverlaySettings{
-		{MaxMessages: 0, FontSize: 22},
-		{MaxMessages: 101, FontSize: 22},
-		{MaxMessages: 40, FontSize: 11},
-		{MaxMessages: 40, FontSize: 73},
+	for _, tt := range []func(*OverlaySettings){
+		func(o *OverlaySettings) { o.MaxMessages = 0 },
+		func(o *OverlaySettings) { o.MaxMessages = 101 },
+		func(o *OverlaySettings) { o.FontSize = 11 },
+		func(o *OverlaySettings) { o.FontSize = 73 },
+		func(o *OverlaySettings) { o.FontFamily = "comic" },
+		func(o *OverlaySettings) { o.TextColor = "red" },
+		func(o *OverlaySettings) { o.TextColor = "#fff" },
+		func(o *OverlaySettings) { o.Position = "center" },
+		func(o *OverlaySettings) { o.Margin = -1 },
+		func(o *OverlaySettings) { o.Margin = 401 },
+		func(o *OverlaySettings) { o.Width = 99 },
+		func(o *OverlaySettings) { o.Width = 1921 },
 	} {
-		if err := tt.Normalize(); err == nil {
-			t.Errorf("Normalize(%+v) accepté, attendu une erreur", tt)
+		o := DefaultOverlaySettings()
+		tt(&o)
+		if err := o.Normalize(); err == nil {
+			t.Errorf("Normalize(%+v) accepté, attendu une erreur", o)
 		}
 	}
 }
